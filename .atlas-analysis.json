@@ -1,0 +1,207 @@
+{
+  "projectType": "framework",
+  "projectName": "Hyperstack",
+  "projectDescription": "Real-time streaming data pipelines for Solana - transform on-chain events into typed state projections",
+  "theme": "aspen",
+  "primaryColor": "#9333EA",
+  "lightColor": "#A855F7",
+  "darkColor": "#7C3AED",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/overview",
+              "concepts/architecture",
+              "concepts/entities",
+              "concepts/mappings",
+              "concepts/streams",
+              "concepts/stacks"
+            ]
+          },
+          {
+            "group": "Building Stacks",
+            "pages": [
+              "building-stacks/getting-started",
+              "building-stacks/configuration",
+              "building-stacks/stack-definitions",
+              "building-stacks/finding-idls",
+              "building-stacks/rust-dsl",
+              "building-stacks/strategies",
+              "building-stacks/resolvers"
+            ]
+          },
+          {
+            "group": "Using Stacks",
+            "pages": [
+              "using-stacks/overview",
+              "using-stacks/views",
+              "using-stacks/subscriptions",
+              "using-stacks/transactions"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "SDKs",
+        "groups": [
+          {
+            "group": "Client SDKs",
+            "pages": [
+              "sdks/overview",
+              "sdks/typescript",
+              "sdks/react",
+              "sdks/rust",
+              "sdks/python"
+            ]
+          },
+          {
+            "group": "TypeScript SDK",
+            "pages": [
+              "sdks/typescript/client",
+              "sdks/typescript/views",
+              "sdks/typescript/subscriptions",
+              "sdks/typescript/storage",
+              "sdks/typescript/instructions"
+            ]
+          },
+          {
+            "group": "React SDK",
+            "pages": [
+              "sdks/react/provider",
+              "sdks/react/hooks",
+              "sdks/react/mutations",
+              "sdks/react/examples"
+            ]
+          },
+          {
+            "group": "Rust SDK",
+            "pages": [
+              "sdks/rust/client",
+              "sdks/rust/views",
+              "sdks/rust/streams",
+              "sdks/rust/examples"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "CLI Reference",
+        "groups": [
+          {
+            "group": "CLI Tools",
+            "pages": [
+              "cli/overview",
+              "cli/installation",
+              "cli/authentication"
+            ]
+          },
+          {
+            "group": "Commands",
+            "pages": [
+              "cli/commands/init",
+              "cli/commands/create",
+              "cli/commands/up",
+              "cli/commands/stack",
+              "cli/commands/sdk",
+              "cli/commands/build",
+              "cli/commands/explore"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Server",
+        "groups": [
+          {
+            "group": "Hyperstack Server",
+            "pages": [
+              "server/overview",
+              "server/architecture",
+              "server/configuration",
+              "server/deployment",
+              "server/monitoring"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "server/interpreter",
+              "server/vm",
+              "server/projector",
+              "server/websocket-protocol"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Rust API",
+            "pages": [
+              "api/rust/hyperstack",
+              "api/rust/interpreter",
+              "api/rust/server",
+              "api/rust/sdk",
+              "api/rust/macros"
+            ]
+          },
+          {
+            "group": "TypeScript API",
+            "pages": [
+              "api/typescript/hyperstack",
+              "api/typescript/client",
+              "api/typescript/views",
+              "api/typescript/types"
+            ]
+          },
+          {
+            "group": "React API",
+            "pages": [
+              "api/react/provider",
+              "api/react/hooks",
+              "api/react/types"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Declarative stream definitions with Rust macros",
+    "Real-time WebSocket data streaming",
+    "Type-safe SDK generation (TypeScript, Rust, Python)",
+    "Entity mapping and aggregation strategies",
+    "Multi-language client libraries",
+    "CLI for stack deployment and management",
+    "WebSocket server with projection handlers",
+    "AST transformation runtime and VM",
+    "Yellowstone gRPC integration for Solana events"
+  ],
+  "publicApiSurface": [
+    "hyperstack::prelude::*",
+    "hyperstack_macros::{hyperstack, Stream}",
+    "hyperstack_interpreter::{TypeScriptCompiler, VmContext}",
+    "hyperstack_server::{Projector, ServerConfig, BusManager}",
+    "hyperstack_sdk::HyperStack",
+    "HyperStack (TypeScript client)",
+    "HyperstackProvider (React)",
+    "useHyperstack, useView, useEntity (React hooks)",
+    "hs init, hs up, hs stack, hs sdk (CLI commands)",
+    "Views: state, list modes",
+    "Mappings: #[map], #[from_instruction], #[aggregate], #[event]",
+    "Strategies: SetOnce, LastWrite, Append, Sum, Count"
+  ]
+}
