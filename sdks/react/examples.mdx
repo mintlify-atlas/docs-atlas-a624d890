@@ -334,8 +334,13 @@ function CounterHistory() {
 ```tsx TodoList.tsx
 import { useState } from 'react';
 import { useHyperstack } from 'hyperstack-react';
-import { TODO_STACK } from './stack';
 import { z } from 'zod';
+
+// Define your stack configuration
+const TodoStack = {
+  name: 'my-todos',
+  url: 'wss://your-stack.usehyperstack.com',
+};
 
 const TodoSchema = z.object({
   id: z.string(),
@@ -347,7 +352,7 @@ const TodoSchema = z.object({
 type Todo = z.infer<typeof TodoSchema>;
 
 function TodoList() {
-  const { views, instructions } = useHyperstack(TODO_STACK);
+  const { views, instructions } = useHyperstack(TodoStack);
   const [newTodoText, setNewTodoText] = useState('');
   
   // Fetch all todos
