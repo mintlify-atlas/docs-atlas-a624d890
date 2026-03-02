@@ -1,0 +1,294 @@
+---
+title: How Hyperstack Works
+description: Understand Hyperstack's architecture and how it transforms Solana on-chain data into typed state projections
+---
+
+Hyperstack is a real-time streaming data pipeline for Solana that transforms on-chain events into typed state projections. Instead of building infrastructure, you declare what data you need, and Hyperstack handles all the complexity.
+
+## The Problem
+
+Building data pipelines for Solana apps is painful:
+
+1. **Manual parsing** - You write custom code to decode accounts and instructions
+2. **ETL complexity** - You build pipelines to transform, aggregate, and store data  
+3. **RPC overhead** - You manage websocket connections, retries, and state sync
+4. **Type mismatches** - On-chain types don't match your app types
+
+Most teams spend weeks on infrastructure before shipping features.
+
+## The Hyperstack Solution
+
+Instead of building infrastructure, you **declare what data you need**:
+
+```rust
+#[hyperstack(idl = "program/idl.json")]
+pub mod my_stream {
+    #[entity(name = "Token")]
+    #[derive(Stream)]
+    pub struct Token {
+        #[map(CreateIx::mint, primary_key)]
+        pub mint: String,
+        
+        #[map(BondingCurve::virtual_sol_reserves)]
+        pub sol_reserves: u64,
+        
+        #[aggregate(from = BuyIx, field = amount, strategy = Sum)]
+        pub total_volume: u64,
+    }
+}
+```
+
+Hyperstack then:
+- Subscribes to the relevant on-chain events
+- Transforms raw data into your entity shape
+- Streams updates to your app as they happen on-chain
+- Generates type-safe SDKs for your frontend
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    YOUR SPEC                            │
+│  (Rust macros defining entities, mappings, aggregates)  │
+└─────────────────────────────────────────────────────────┘
+                          ↓
+┌─────────────────────────────────────────────────────────┐
+│                   HYPERSTACK RUNTIME                     │
+│                                                          │
+│   ┌────────────┐    ┌────────────┐    ┌────────────┐    │
+│   │  Compiler  │ →  │     VM     │ →  │  Streamer  │    │
+│   └────────────┘    └────────────┘    └────────────┘    │
+│         ↑                 ↑                  ↓          │
+│    AST Bytecode     State Tables      WebSocket         │
+│                                                          │
+│   ┌──────────────────────────────────────────────────┐  │
+│   │              Yellowstone gRPC                     │  │
+│   │         (Real-time Solana data feed)             │  │
+│   └──────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────┘
+                          ↓
+┌─────────────────────────────────────────────────────────┐
+│                     YOUR APP                            │
+│                                                          │
+│   const { data } = stack.views.tokens.list.use()        │
+│                                                          │
+└─────────────────────────────────────────────────────────┘
+```
+
+## Key Components
+
+### Specification (AST)
+
+Your stream definition is written in Rust using procedural macros. During compilation, these macros generate an Abstract Syntax Tree (AST) that describes:
+
+- **Entities** - The data structures you want
+- **Handlers** - Which on-chain events to listen for
+- **Mappings** - How to extract and transform data
+- **Field Types** - Complete type information for SDK generation
+
+The AST is serialized to JSON (`.hyperstack/*.stack.json`) and deployed to the runtime.
+
+### Compiler
+
+The compiler transforms the AST into optimized bytecode:
+
+- **OpCodes** - Low-level VM instructions (LoadEventField, SetField, etc.)
+- **Handlers** - Event routing tables by type
+- **State Tables** - Entity storage configuration
+- **Computed Fields** - Expression evaluation hooks
+
+Bytecode is deterministic and cacheable - the same AST always produces identical bytecode.
+
+### Virtual Machine (VM)
+
+The VM executes bytecode to process blockchain events:
+
+**State Management:**
+- **State Tables** - LRU-cached entity storage (default: 2,500 entries per entity)
+- **Lookup Indexes** - Fast key resolution for cross-entity references
+- **Temporal Indexes** - Time-based entity lookups with TTL
+- **PDA Reverse Lookups** - Map PDAs back to seeds
+
+**Event Processing:**
+1. Events arrive via Yellowstone gRPC
+2. VM routes to handlers by event type
+3. Handlers execute bytecode:
+   - Extract fields from event data
+   - Resolve primary keys (embedded, lookup, computed, or temporal)
+   - Apply transformations and population strategies
+   - Update state tables
+   - Queue resolver requests for async enrichment
+4. Dirty tracking captures only changed fields
+5. Mutations stream to connected clients
+
+**Staleness Detection:**
+- Account updates: Lexicographic comparison on `(slot, write_version)`
+- Instruction updates: Exact deduplication via `(slot, txn_index)`
+- Stale updates are rejected silently
+
+### Streaming
+
+The streaming layer provides real-time updates to clients:
+
+- **WebSocket Protocol** - Bidirectional JSON messages
+- **View Subscriptions** - Client subscribes to entity views
+- **Delta Updates** - Only changed fields are transmitted
+- **Append Tracking** - Array appends send only new items
+
+## Data Flow
+
+### Specification Time
+
+1. Write stream definition using `#[hyperstack]` macro
+2. `cargo build` generates AST (`.hyperstack/*.stack.json`)
+3. Deploy with `hs up` (uploads AST to runtime)
+4. Runtime compiles AST to bytecode
+
+### Runtime
+
+1. **Event Ingestion**: Solana events arrive via Yellowstone gRPC
+2. **Event Routing**: VM routes events to entity handlers by type
+3. **Handler Execution**: Bytecode executes:
+   - Extract fields from event payload
+   - Resolve entity primary key
+   - Load or initialize entity state
+   - Apply mappings with population strategies
+   - Evaluate computed fields
+   - Track dirty fields
+4. **State Update**: Modified entities saved to state table
+5. **Mutation Emission**: Delta patches stream to clients
+
+### Client
+
+1. Connect to WebSocket endpoint
+2. Subscribe to views (e.g., `Token/list`, `Token/state`)
+3. Receive snapshot of current state
+4. Receive live delta updates as mutations
+5. SDK merges deltas into local state
+6. React components re-render automatically
+
+## Processing Model
+
+### Handlers
+
+Each entity can have multiple handlers, one per event type (account or instruction):
+
+```rust
+#[entity(name = "Token")]
+pub struct Token {
+    // Handler 1: From CreateIx instruction
+    #[map(CreateIx::mint, primary_key)]
+    pub mint: String,
+    
+    // Handler 2: From BondingCurve account
+    #[map(BondingCurve::virtual_sol_reserves)]
+    pub sol_reserves: u64,
+    
+    // Handler 3: Aggregate from BuyIx instructions
+    #[aggregate(from = BuyIx, field = amount, strategy = Sum)]
+    pub total_volume: u64,
+}
+```
+
+This generates 3 handlers:
+1. `CreateIx` instruction → extracts `mint`
+2. `BondingCurve` account → extracts `sol_reserves`
+3. `BuyIx` instruction → sums `amount` into `total_volume`
+
+### Population Strategies
+
+Strategies control how field values are updated over time:
+
+| Strategy | Behavior | Use Case |
+|----------|----------|----------|
+| `SetOnce` | Set once, never overwrite | Immutable data (mint address) |
+| `LastWrite` | Always use latest value | Current state (price, balance) |
+| `Append` | Collect into array | Event history |
+| `Sum` | Running total | Cumulative metrics |
+| `Count` | Increment counter | Event counts |
+| `Min`/`Max` | Track extremes | High/low values |
+| `UniqueCount` | Count distinct values | Unique traders |
+
+### Key Resolution
+
+Every entity has a primary key that uniquely identifies it. Hyperstack supports four resolution strategies:
+
+**1. Embedded** - Key is extracted directly from event data:
+```rust
+#[map(CreateIx::mint, primary_key)]
+pub mint: String,
+```
+
+**2. Lookup** - Key is resolved via a lookup index:
+```rust
+#[map(BondingCurve::mint, lookup_index)]
+pub mint: String,  // Creates reverse lookup: curve_address → mint
+
+#[map(TradeIx::bonding_curve)]  // Uses lookup to find mint
+pub bonding_curve: String,
+```
+
+**3. Temporal** - Key is resolved based on timestamp:
+```rust
+#[map(UpdateIx::round_id, lookup_index, temporal_field = "timestamp")]
+pub round_id: u64,  // round_id changes over time
+
+// Later updates use the round_id active at their timestamp
+```
+
+**4. Computed** - Key is derived from multiple fields:
+```rust
+// Generates key: sha256(user + mint)
+#[derive_from(from = TradeIx, field = user)]
+pub user: String,
+```
+
+## Type Safety
+
+Hyperstack provides end-to-end type safety:
+
+1. **Spec Types** - Rust ensures valid mappings at compile time
+2. **AST Types** - Complete type information captured in AST
+3. **Generated SDKs** - TypeScript/Python types match Rust definitions
+4. **Runtime Validation** - Data conforms to expected shapes
+
+```typescript
+// TypeScript knows token.mint is string, token.volume is number
+const { data: token } = stack.views.tokens.state.use({ key });
+console.log(token.mint);    // string
+console.log(token.volume);  // number (from u64)
+```
+
+## Performance Characteristics
+
+### Memory Management
+
+- **State Tables**: LRU-cached, default 2,500 entities per table
+- **Lookup Indexes**: LRU-cached, 2,500 entries per index
+- **Temporal Indexes**: 2,500 keys, max 250 entries per key, 5-minute TTL
+- **PDA Reverse Lookups**: 2,500 entries
+- **Pending Queue**: Max 2,500 total updates, 50 per PDA, 5-minute TTL
+
+### Optimizations
+
+- **Path Caching**: Field paths compiled once and cached
+- **Dirty Tracking**: Only changed fields trigger mutations
+- **Delta Transmission**: Append operations send only new items
+- **Bytecode Compilation**: AST compiled to optimized opcodes
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Architecture" icon="diagram-project" href="/concepts/architecture">
+    Deep dive into system components
+  </Card>
+  <Card title="Entities" icon="cube" href="/concepts/entities">
+    Learn about entity definitions
+  </Card>
+  <Card title="Mappings" icon="arrows-left-right" href="/concepts/mappings">
+    Understand field mapping strategies
+  </Card>
+  <Card title="Streams" icon="water" href="/concepts/streams">
+    Stream definitions and lifecycle
+  </Card>
+</CardGroup>

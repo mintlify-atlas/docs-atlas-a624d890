@@ -1,0 +1,471 @@
+---
+title: "Complete Rust Examples"
+description: "Real-world examples and patterns for using the HyperStack Rust SDK"
+---
+
+Complete examples demonstrating common patterns and use cases with the Rust SDK.
+
+## Basic Connection and Streaming
+
+```rust
+use hyperstack_sdk::prelude::*;
+use hyperstack_stacks::ore::{OreRound, OreStreamStack, OreTreasury};
+use futures_util::StreamExt;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let hs = HyperStack::<OreStreamStack>::connect().await?;
+
+    println!("Connected to HyperStack");
+
+    // Stream latest round updates
+    let mut stream = hs.views.ore_round.latest().listen().take(1);
+    
+    while let Some(round) = stream.next().await {
+        println!("Round #{}", round.id.round_id.unwrap_or(0));
+        println!("Motherlode: {:?}", round.state.motherlode);
+        println!("Total Deployed: {:?}", round.state.total_deployed);
+    }
+
+    Ok(())
+}
+```
+
+## Parallel Streaming
+
+Stream multiple views concurrently:
+
+```rust
+use hyperstack_sdk::prelude::*;
+use hyperstack_stacks::ore::{OreRound, OreStreamStack, OreTreasury};
+use futures_util::StreamExt;
+
+fn print_round(round: &OreRound) {
+    println!("\n=== Round #{} ===", round.id.round_id.unwrap_or(0));
+    println!("Address: {:?}", round.id.round_address);
+    println!("Motherlode: {:?}", round.state.motherlode);
+    println!("Total Deployed: {:?}", round.state.total_deployed);
+    println!("Expires At: {:?}", round.state.expires_at);
+    println!("Deploy Count: {:?}", round.metrics.deploy_count);
+}
+
+fn print_treasury(treasury: &OreTreasury) {
+    println!("\n=== Treasury ===");
+    println!("Address: {:?}", treasury.id.address);
+    println!("Balance: {:?}", treasury.state.balance);
+    println!("Motherlode: {:?}", treasury.state.motherlode);
+    println!("Total Refined: {:?}", treasury.state.total_refined);
+    println!("Total Staked: {:?}", treasury.state.total_staked);
+    println!("Total Unclaimed: {:?}", treasury.state.total_unclaimed);
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let hs = HyperStack::<OreStreamStack>::connect().await?;
+
+    println!("--- Streaming OreRound and OreTreasury updates ---\n");
+
+    let round_view = hs.views.ore_round.latest();
+    let treasury_view = hs.views.ore_treasury.list();
+
+    // Spawn concurrent tasks
+    let round_handle = tokio::spawn(async move {
+        let mut stream = round_view.listen().take(1);
+        while let Some(round) = stream.next().await {
+            if round.id.round_id.is_some() {
+                print_round(&round);
+            }
+        }
+    });
+
+    let treasury_handle = tokio::spawn(async move {
+        let mut stream = treasury_view.listen().take(1);
+        while let Some(treasury) = stream.next().await {
+            if treasury.id.address.is_some() {
+                print_treasury(&treasury);
+            }
+        }
+    });
+
+    // Wait for both tasks
+    let _ = tokio::join!(round_handle, treasury_handle);
+    
+    Ok(())
+}
+```
+
+## Filtered Streaming
+
+Filter and transform streams:
+
+```rust
+use hyperstack_sdk::prelude::*;
+use hyperstack_stacks::ore::OreStreamStack;
+use futures_util::StreamExt;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let hs = HyperStack::<OreStreamStack>::connect().await?;
+
+    // Only process rounds with high motherlode
+    let mut stream = hs.views.ore_round.list()
+        .listen()
+        .filter(|round| round.state.motherlode.unwrap_or(0) > 1000)
+        .map(|round| {
+            (
+                round.id.round_id.unwrap_or(0),
+                round.state.motherlode.unwrap_or(0),
+            )
+        });
+
+    while let Some((round_id, motherlode)) = stream.next().await {
+        println!("Round {} has high motherlode: {}", round_id, motherlode);
+    }
+
+    Ok(())
+}
+```
+
+## Change Tracking with RichUpdates
+
+Track before/after state changes:
+
+```rust
+use hyperstack_sdk::prelude::*;
+use hyperstack_stacks::ore::OreStreamStack;
+use futures_util::StreamExt;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let hs = HyperStack::<OreStreamStack>::connect().await?;
+
+    let mut stream = hs.views.ore_round.latest().watch_rich();
+
+    while let Some(update) = stream.next().await {
+        match update {
+            RichUpdate::Created { key, data } => {
+                println!("New round created: {}", key);
+                println!("  Motherlode: {:?}", data.state.motherlode);
+            }
+            RichUpdate::Updated { key, before, after, patch } => {
+                println!("Round updated: {}", key);
+                
+                // Check if specific field changed
+                if before.state.motherlode != after.state.motherlode {
+                    println!("  Motherlode: {:?} -> {:?}",
+                        before.state.motherlode,
+                        after.state.motherlode
+                    );
+                }
+                
+                // Check patch for specific fields
+                if let Some(p) = patch {
+                    if p.as_object().map(|o| o.contains_key("motherlode")).unwrap_or(false) {
+                        println!("  Patch included motherlode change");
+                    }
+                }
+            }
+            RichUpdate::Deleted { key, last_known } => {
+                println!("Round deleted: {}", key);
+                if let Some(data) = last_known {
+                    println!("  Last known motherlode: {:?}", data.state.motherlode);
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+```
+
+## Operation Type Handling
+
+Handle different update operations:
+
+```rust
+use hyperstack_sdk::prelude::*;
+use hyperstack_stacks::ore::OreStreamStack;
+use futures_util::StreamExt;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let hs = HyperStack::<OreStreamStack>::connect().await?;
+
+    let mut stream = hs.views.ore_round.list().watch();
+
+    while let Some(update) = stream.next().await {
+        match update {
+            Update::Upsert { key, data } => {
+                println!("Upserted round {}", key);
+                println!("  ID: {:?}", data.id.round_id);
+            }
+            Update::Patch { key, data } => {
+                println!("Patched round {}", key);
+                println!("  Merged state: {:?}", data.state);
+            }
+            Update::Delete { key } => {
+                println!("Deleted round {}", key);
+            }
+        }
+    }
+
+    Ok(())
+}
+```
+
+## Custom Configuration
+
+Build client with custom settings:
+
+```rust
+use hyperstack_sdk::prelude::*;
+use hyperstack_stacks::ore::OreStreamStack;
+use std::time::Duration;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let hs = HyperStack::<OreStreamStack>::builder()
+        .url("wss://custom.server.com")
+        .auto_reconnect(true)
+        .max_reconnect_attempts(10)
+        .ping_interval(Duration::from_secs(30))
+        .initial_data_timeout(Duration::from_secs(10))
+        .max_entries_per_view(1000)
+        .connect()
+        .await?;
+
+    println!("Connected with custom configuration");
+
+    // Use client...
+
+    Ok(())
+}
+```
+
+## State View Queries
+
+Query specific entities by key:
+
+```rust
+use hyperstack_sdk::prelude::*;
+use hyperstack_stacks::ore::OreStreamStack;
+use futures_util::StreamExt;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let hs = HyperStack::<OreStreamStack>::connect().await?;
+
+    // Get specific round by key
+    if let Some(round) = hs.views.ore_round.state().get("round_123").await {
+        println!("Found round: {:?}", round.id.round_id);
+    }
+
+    // Watch specific round for updates
+    let mut stream = hs.views.ore_round.state().listen("round_123");
+    
+    while let Some(round) = stream.next().await {
+        println!("Round 123 updated: {:?}", round.state);
+    }
+
+    Ok(())
+}
+```
+
+## Server-Side Pagination
+
+Use take and skip for server-side pagination:
+
+```rust
+use hyperstack_sdk::prelude::*;
+use hyperstack_stacks::ore::OreStreamStack;
+use futures_util::StreamExt;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let hs = HyperStack::<OreStreamStack>::connect().await?;
+
+    // Get page 2 (items 11-20)
+    let page_size = 10;
+    let page = 2;
+    
+    let mut stream = hs.views.ore_round.list()
+        .listen()
+        .skip((page - 1) * page_size)
+        .take(page_size);
+
+    let mut items = Vec::new();
+    while let Some(round) = stream.next().await {
+        items.push(round);
+        if items.len() >= page_size as usize {
+            break;
+        }
+    }
+
+    println!("Page {} has {} items", page, items.len());
+
+    Ok(())
+}
+```
+
+## Error Handling
+
+Robust error handling patterns:
+
+```rust
+use hyperstack_sdk::prelude::*;
+use hyperstack_stacks::ore::OreStreamStack;
+use futures_util::StreamExt;
+use anyhow::{Context, Result};
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    // Handle connection errors
+    let hs = HyperStack::<OreStreamStack>::connect()
+        .await
+        .context("Failed to connect to HyperStack")?;
+
+    println!("Connected successfully");
+
+    // Monitor connection state
+    tokio::spawn(async move {
+        loop {
+            let state = hs.connection_state().await;
+            println!("Connection state: {:?}", state);
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+        }
+    });
+
+    // Handle stream errors
+    let mut stream = hs.views.ore_round.latest().listen();
+
+    while let Some(round) = stream.next().await {
+        // Process with error handling
+        if let Err(e) = process_round(&round) {
+            eprintln!("Error processing round: {}", e);
+            continue;
+        }
+    }
+
+    Ok(())
+}
+
+fn process_round(round: &OreRound) -> Result<()> {
+    let motherlode = round.state.motherlode
+        .context("Missing motherlode")?;
+    
+    println!("Motherlode: {}", motherlode);
+    Ok(())
+}
+```
+
+## Graceful Shutdown
+
+Handle shutdown signals properly:
+
+```rust
+use hyperstack_sdk::prelude::*;
+use hyperstack_stacks::ore::OreStreamStack;
+use futures_util::StreamExt;
+use tokio::signal;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let hs = HyperStack::<OreStreamStack>::connect().await?;
+
+    let mut stream = hs.views.ore_round.latest().listen();
+
+    tokio::select! {
+        _ = async {
+            while let Some(round) = stream.next().await {
+                println!("Round: {:?}", round.id.round_id);
+            }
+        } => {
+            println!("Stream ended");
+        }
+        _ = signal::ctrl_c() => {
+            println!("\nReceived shutdown signal");
+            hs.disconnect().await;
+            println!("Disconnected gracefully");
+        }
+    }
+
+    Ok(())
+}
+```
+
+## Combining Multiple Filters
+
+Chain server-side and client-side filters:
+
+```rust
+use hyperstack_sdk::prelude::*;
+use hyperstack_stacks::ore::OreStreamStack;
+use futures_util::StreamExt;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let hs = HyperStack::<OreStreamStack>::connect().await?;
+
+    let mut stream = hs.views.ore_round.list()
+        .listen()
+        .take(100)                    // Server: top 100 rounds
+        .filter("status", "active")   // Server: only active
+        .filter(|r| r.state.motherlode.unwrap_or(0) > 500)  // Client: high motherlode
+        .map(|r| r.id.round_id.unwrap_or(0));  // Client: extract ID
+
+    while let Some(round_id) = stream.next().await {
+        println!("Active high-value round: {}", round_id);
+    }
+
+    Ok(())
+}
+```
+
+## Async/Await Patterns
+
+Common async patterns:
+
+```rust
+use hyperstack_sdk::prelude::*;
+use hyperstack_stacks::ore::OreStreamStack;
+use futures_util::StreamExt;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let hs = HyperStack::<OreStreamStack>::connect().await?;
+
+    // Get data immediately
+    let rounds = hs.views.ore_round.list().get().await;
+    println!("Got {} rounds", rounds.len());
+
+    // Get first item
+    if let Some(latest) = hs.views.ore_round.latest().get().await.first() {
+        println!("Latest round: {:?}", latest.id.round_id);
+    }
+
+    // Stream with timeout
+    let mut stream = hs.views.ore_round.latest().listen();
+    
+    tokio::select! {
+        Some(round) = stream.next() => {
+            println!("Got round: {:?}", round);
+        }
+        _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {
+            println!("Timeout waiting for round");
+        }
+    }
+
+    Ok(())
+}
+```
+
+## Best Practices
+
+1. **Use `anyhow::Result` for error handling** - Provides context and chaining
+2. **Spawn tasks for concurrent streams** - Use `tokio::spawn` for parallel processing
+3. **Handle shutdown gracefully** - Use `tokio::signal` and disconnect properly
+4. **Use server-side filters first** - Reduce network bandwidth
+5. **Chain operators efficiently** - Combine related transformations
+6. **Monitor connection state** - React to disconnections
+7. **Use `take()` to limit stream duration** - Prevent infinite loops in examples
+8. **Extract helper functions** - Keep main logic clean and testable

@@ -1,0 +1,525 @@
+---
+title: hs stack
+description: Manage deployed stacks - list, show, push, delete, rollback, and stop deployments
+---
+
+# hs stack
+
+Manage your deployed stacks with commands for listing, viewing details, pushing updates, rollback, and deletion.
+
+## Subcommands
+
+- [`hs stack list`](#list) - List all stacks with deployment status
+- [`hs stack push`](#push) - Push local stacks to remote
+- [`hs stack show`](#show) - Show detailed stack information
+- [`hs stack versions`](#versions) - Show version history
+- [`hs stack delete`](#delete) - Delete a stack from remote
+- [`hs stack rollback`](#rollback) - Rollback to a previous deployment
+- [`hs stack stop`](#stop) - Stop a deployment
+
+---
+
+## list
+
+List all stacks with their deployment status.
+
+### Usage
+
+```bash
+hs stack list [OPTIONS]
+```
+
+### Options
+
+<ParamField path="--json" type="boolean">
+  Output in JSON format
+</ParamField>
+
+### Example
+
+```bash
+hs stack list
+```
+
+Output:
+```
+STACK NAME       STATUS    VERSION   ENDPOINT
+nft-indexer      live      v3        wss://nft-indexer.stack.usehyperstack.com
+token-tracker    live      v5        wss://token-tracker.stack.usehyperstack.com
+ore-monitor      stopped   v2        wss://ore-monitor.stack.usehyperstack.com
+```
+
+### JSON Output
+
+```bash
+hs stack list --json
+```
+
+```json
+[
+  {
+    "name": "nft-indexer",
+    "status": "live",
+    "version": 3,
+    "endpoint": "wss://nft-indexer.stack.usehyperstack.com",
+    "updated_at": "2026-03-01T10:30:00Z"
+  },
+  {
+    "name": "token-tracker",
+    "status": "live",
+    "version": 5,
+    "endpoint": "wss://token-tracker.stack.usehyperstack.com",
+    "updated_at": "2026-02-28T15:45:00Z"
+  }
+]
+```
+
+---
+
+## push
+
+Push local stack definitions to remote. Creates a new version if the stack definition has changed.
+
+### Usage
+
+```bash
+hs stack push [STACK_NAME]
+```
+
+### Arguments
+
+<ParamField path="stack_name" type="string">
+  Name of specific stack to push
+  
+  If not provided, pushes all stacks from `hyperstack.toml`.
+</ParamField>
+
+### Examples
+
+#### Push All Stacks
+
+```bash
+hs stack push
+```
+
+Output:
+```
+Pushing stacks...
+✓ nft-indexer (version 3 → 4)
+✓ token-tracker (no changes)
+```
+
+#### Push Specific Stack
+
+```bash
+hs stack push nft-indexer
+```
+
+### Notes
+
+- Only creates a new version if the stack definition changed
+- Does **not** trigger a build or deployment (use `hs up` for that)
+- Useful for versioning without deploying
+
+---
+
+## show
+
+Show detailed information about a stack including deployment status, versions, and configuration.
+
+### Usage
+
+```bash
+hs stack show STACK_NAME [OPTIONS]
+```
+
+### Arguments
+
+<ParamField path="stack_name" type="string" required>
+  Name of the stack
+</ParamField>
+
+### Options
+
+<ParamField path="--version" type="integer">
+  Show specific version details
+</ParamField>
+
+<ParamField path="--json" type="boolean">
+  Output in JSON format
+</ParamField>
+
+### Examples
+
+#### Show Latest Version
+
+```bash
+hs stack show nft-indexer
+```
+
+Output:
+```
+Stack: nft-indexer
+Status: live
+Version: 3 (latest)
+Created: 2026-03-01 10:30:00 UTC
+Updated: 2026-03-01 10:35:00 UTC
+
+Production Deployment:
+  Endpoint: wss://nft-indexer.stack.usehyperstack.com
+  Build: #12
+  Status: live
+  Deployed: 2026-03-01 10:35:00 UTC
+
+Branch Deployments:
+  staging:
+    Endpoint: wss://nft-indexer-staging.stack.usehyperstack.com
+    Build: #11
+    Status: live
+
+Entities: 3
+Projections: 5
+```
+
+#### Show Specific Version
+
+```bash
+hs stack show nft-indexer --version 2
+```
+
+Output:
+```
+Stack: nft-indexer
+Version: 2
+Created: 2026-02-15 08:20:00 UTC
+
+Deployments using this version:
+  Production: #8 (rolled back)
+  staging: #7 (active)
+
+Entities: 2
+Projections: 4
+```
+
+---
+
+## versions
+
+Show version history for a stack.
+
+### Usage
+
+```bash
+hs stack versions STACK_NAME [OPTIONS]
+```
+
+### Arguments
+
+<ParamField path="stack_name" type="string" required>
+  Name of the stack
+</ParamField>
+
+### Options
+
+<ParamField path="--limit" type="integer" default="20">
+  Maximum number of versions to show
+</ParamField>
+
+<ParamField path="--json" type="boolean">
+  Output in JSON format
+</ParamField>
+
+### Example
+
+```bash
+hs stack versions nft-indexer
+```
+
+Output:
+```
+VERSION   CREATED                  DEPLOYED   BUILDS
+v3        2026-03-01 10:30:00      yes        #12 (live), #13 (failed)
+v2        2026-02-15 08:20:00      yes        #8, #9, #10
+v1        2026-02-01 14:00:00      yes        #1, #2, #3
+```
+
+#### Limit Results
+
+```bash
+hs stack versions nft-indexer --limit 5
+```
+
+---
+
+## delete
+
+Delete a stack from remote. This stops all deployments and removes all versions.
+
+### Usage
+
+```bash
+hs stack delete STACK_NAME [OPTIONS]
+```
+
+### Arguments
+
+<ParamField path="stack_name" type="string" required>
+  Name of the stack to delete
+</ParamField>
+
+### Options
+
+<ParamField path="--force" type="boolean">
+  Skip confirmation prompt
+</ParamField>
+
+### Examples
+
+#### Interactive Delete
+
+```bash
+hs stack delete nft-indexer
+```
+
+Output:
+```
+Warning: This will permanently delete the stack 'nft-indexer' and all its data.
+
+This will:
+  - Stop all running deployments
+  - Delete all versions
+  - Remove all build artifacts
+
+Are you sure? (y/N): y
+
+Deleting stack 'nft-indexer'...
+  Stopping production deployment... ✓
+  Stopping staging deployment... ✓
+  Deleting versions... ✓
+  Removing build artifacts... ✓
+
+Stack deleted successfully.
+```
+
+#### Force Delete (No Confirmation)
+
+```bash
+hs stack delete nft-indexer --force
+```
+
+<Warning>
+  This permanently deletes the stack and all its data. This action cannot be undone.
+</Warning>
+
+---
+
+## rollback
+
+Rollback a deployment to a previous version.
+
+### Usage
+
+```bash
+hs stack rollback STACK_NAME [OPTIONS]
+```
+
+### Arguments
+
+<ParamField path="stack_name" type="string" required>
+  Name of the stack to rollback
+</ParamField>
+
+### Options
+
+<ParamField path="--to" type="integer">
+  Rollback to specific version number
+  
+  If not provided, rolls back to the previous successful deployment.
+</ParamField>
+
+<ParamField path="--build" type="integer">
+  Rollback to specific build ID
+</ParamField>
+
+<ParamField path="--branch" type="string" default="production">
+  Branch deployment to rollback
+</ParamField>
+
+<ParamField path="--rebuild" type="boolean">
+  Force full rebuild instead of using existing image
+</ParamField>
+
+<ParamField path="--no-wait" type="boolean">
+  Don't watch the rollback progress
+</ParamField>
+
+### Examples
+
+#### Rollback to Previous Version
+
+```bash
+hs stack rollback nft-indexer
+```
+
+Output:
+```
+Rolling back nft-indexer to previous successful deployment...
+
+Current: version 3, build #12
+Target: version 2, build #10
+
+Rollback initiated...
+  Deploying build #10... 100% ✓
+
+Rollback successful!
+Endpoint: wss://nft-indexer.stack.usehyperstack.com
+```
+
+#### Rollback to Specific Version
+
+```bash
+hs stack rollback nft-indexer --to 2
+```
+
+#### Rollback to Specific Build
+
+```bash
+hs stack rollback nft-indexer --build 10
+```
+
+#### Rollback Branch Deployment
+
+```bash
+hs stack rollback nft-indexer --branch staging --to 2
+```
+
+#### Force Rebuild
+
+```bash
+hs stack rollback nft-indexer --to 2 --rebuild
+```
+
+Forces a new build from version 2 instead of reusing build #10.
+
+### How Rollback Works
+
+1. **Find target version/build** - Determines which version to rollback to
+2. **Check existing build** - Looks for a successful build of that version
+3. **Rebuild if needed** - Creates a new build if `--rebuild` is used or no build exists
+4. **Deploy** - Deploys the target build
+5. **Verify** - Confirms the rollback was successful
+
+### When to Use Rollback
+
+- Production incident caused by recent deployment
+- New version has bugs
+- Need to quickly restore service
+
+### When to Use Rebuild
+
+- Previous build artifacts are corrupted
+- Infrastructure changes require new images
+- Rollback fails with existing build
+
+---
+
+## stop
+
+Stop a running deployment.
+
+### Usage
+
+```bash
+hs stack stop STACK_NAME [OPTIONS]
+```
+
+### Arguments
+
+<ParamField path="stack_name" type="string" required>
+  Name of the stack to stop
+</ParamField>
+
+### Options
+
+<ParamField path="--branch" type="string">
+  Branch deployment to stop
+  
+  If not provided, stops the production deployment.
+</ParamField>
+
+<ParamField path="--force" type="boolean">
+  Skip confirmation prompt
+</ParamField>
+
+### Examples
+
+#### Stop Production Deployment
+
+```bash
+hs stack stop nft-indexer
+```
+
+Output:
+```
+Warning: This will stop the production deployment of 'nft-indexer'.
+
+Endpoint: wss://nft-indexer.stack.usehyperstack.com
+Status: live
+
+Are you sure? (y/N): y
+
+Stopping deployment...
+  Draining connections... ✓
+  Stopping containers... ✓
+  Updating DNS... ✓
+
+Deployment stopped successfully.
+```
+
+#### Stop Branch Deployment
+
+```bash
+hs stack stop nft-indexer --branch staging
+```
+
+#### Force Stop (No Confirmation)
+
+```bash
+hs stack stop nft-indexer --force
+```
+
+### When to Stop a Deployment
+
+- Maintenance window
+- Critical bug requires immediate shutdown
+- Cost optimization (stop unused environments)
+- Before deleting a stack
+
+### Restarting a Stopped Deployment
+
+To restart, deploy again:
+
+```bash
+hs up nft-indexer
+```
+
+Or rollback to a previous build:
+
+```bash
+hs stack rollback nft-indexer
+```
+
+---
+
+## Return Codes
+
+All `hs stack` commands use standard return codes:
+
+- `0` - Success
+- `1` - Error
+
+## Related Commands
+
+- [`hs up`](/cli/commands/up) - Deploy a stack
+- [`hs build`](/cli/commands/build) - Manage builds
+- [`hs explore`](/cli/commands/explore) - Explore stack schemas

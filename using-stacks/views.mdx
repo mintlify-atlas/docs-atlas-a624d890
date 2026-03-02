@@ -1,0 +1,342 @@
+---
+title: "Working with Views"
+description: "Access and query real-time data using state and list views"
+---
+
+Views provide type-safe access to your indexed data. Hyperstack supports two view modes:
+
+- **State views** - Single entity by key
+- **List views** - Collection of entities
+
+## View Modes
+
+### State View
+
+Returns a single entity by key. Used for accessing specific records.
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    // Get a single token by mint address
+    const token = await client.views.tokens.state.get('So11111...');
+    // token: Token | null
+
+    // Synchronous access to cached data
+    const cached = client.views.tokens.state.getSync('So11111...');
+    // cached: Token | null | undefined
+    ```
+  </Tab>
+
+  <Tab title="Rust">
+    ```rust
+    // Get a single token by key
+    let token = hs.views.tokens().state().get("So11111...").await;
+    // token: Option<Token>
+
+    // Synchronous access to cached data
+    let cached = hs.views.tokens().state().get_sync("So11111...");
+    // cached: Option<Token>
+    ```
+  </Tab>
+</Tabs>
+
+### List View
+
+Returns an array of entities. Used for collections and queries.
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    // Get all tokens
+    const tokens = await client.views.tokens.list.get();
+    // tokens: Token[]
+
+    // Synchronous access
+    const cached = client.views.tokens.list.getSync();
+    // cached: Token[] | undefined
+    ```
+  </Tab>
+
+  <Tab title="Rust">
+    ```rust
+    // Get all tokens
+    let tokens = hs.views.tokens().list().get().await;
+    // tokens: Vec<Token>
+
+    // For views with take limit, use .first() for single item
+    let latest = hs.views.rounds().latest()
+        .get()
+        .await
+        .first()
+        .cloned();
+    // latest: Option<Round>
+
+    // Synchronous access
+    let cached = hs.views.tokens().list().get_sync();
+    // cached: Vec<Token>
+    ```
+  </Tab>
+</Tabs>
+
+## View Path Format
+
+View paths follow the pattern: `{EntityName}/{mode}`
+
+| Mode | Returns | Example |
+|------|---------|----------|
+| `state` | Single entity | `Token/state` |
+| `list` | Array of entities | `Token/list` |
+
+The entity name must match the `#[entity(name = "EntityName")]` in your Rust stream definition.
+
+## Querying Views
+
+### List Parameters
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    // Limit results
+    for await (const tokens of client.views.tokens.list.use({ limit: 10 })) {
+      console.log('Top 10 tokens:', tokens);
+    }
+
+    // Filter by field
+    for await (const tokens of client.views.tokens.list.use({
+      where: { volume: { gte: 10000 } }
+    })) {
+      console.log('High volume tokens:', tokens);
+    }
+
+    // Multiple conditions
+    for await (const tokens of client.views.tokens.list.use({
+      where: {
+        volume: { gte: 10000 },
+        created_at: { gt: Date.now() - 86400000 }
+      },
+      limit: 20
+    })) {
+      console.log('Recent high volume:', tokens);
+    }
+    ```
+
+    Available operators:
+    - `eq` - Equals
+    - `gt` - Greater than
+    - `gte` - Greater than or equal
+    - `lt` - Less than
+    - `lte` - Less than or equal
+  </Tab>
+
+  <Tab title="Rust">
+    ```rust
+    use futures_util::StreamExt;
+
+    // Limit results
+    let mut stream = hs.views.tokens().list().listen().take(10);
+    while let Some(tokens) = stream.next().await {
+        println!("Top 10 tokens: {:?}", tokens);
+    }
+
+    // Skip results
+    let mut stream = hs.views.tokens().list().listen()
+        .take(20)
+        .skip(10);
+    
+    // Server-side filters
+    let mut stream = hs.views.tokens().list().listen()
+        .filter("min_volume", "10000")
+        .take(20);
+    ```
+  </Tab>
+</Tabs>
+
+## Data Transformations
+
+Transform raw data before it reaches your application:
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    // When defining the stack
+    const MyStack = {
+      name: 'my-app',
+      url: 'wss://...',
+      views: {
+        tokens: {
+          list: {
+            mode: 'list' as const,
+            view: 'Token/list',
+          },
+        },
+      },
+    };
+
+    // Transform happens in the entity definition
+    interface Token {
+      mint: string;
+      supply: bigint; // Converted from string
+      price: number;
+    }
+    ```
+
+    Common transformations:
+    ```typescript
+    // Convert bigint strings to BigInt
+    supply: BigInt(raw.supply)
+
+    // Parse dates
+    created_at: new Date(raw.created_at)
+
+    // Flatten nested data
+    {
+      mint: raw.id.mint,
+      name: raw.info.name,
+      volume: raw.trading.total_volume,
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## View Lifecycle
+
+### Get vs Get Sync
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    // get() - Async, ensures subscription
+    const tokens = await client.views.tokens.list.get();
+    // Waits for data to be loaded
+
+    // getSync() - Sync, returns cached data
+    const cached = client.views.tokens.list.getSync();
+    // Returns immediately, may be undefined
+    ```
+  </Tab>
+
+  <Tab title="Rust">
+    ```rust
+    // get() - Async, ensures subscription
+    let tokens = hs.views.tokens().list().get().await;
+    // Waits for data to be loaded
+
+    // get_sync() - Sync, returns cached data
+    let cached = hs.views.tokens().list().get_sync();
+    // Returns immediately, may be empty
+    ```
+  </Tab>
+</Tabs>
+
+## Store Access
+
+Direct access to the underlying storage:
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    // Access the store directly
+    const store = client.store;
+
+    // Get all data for a view
+    const tokens = await store.getAll('Token/list');
+
+    // Get specific entity
+    const token = await store.get('Token/state', 'So11111...');
+
+    // Clear all cached data
+    client.clearStore();
+    ```
+  </Tab>
+
+  <Tab title="Rust">
+    ```rust
+    // Access the store directly
+    let store = hs.store();
+
+    // Get all data for a view
+    let tokens = store.list::<Token>("Token/list").await;
+
+    // Get specific entity
+    let token = store.get::<Token>("Token/state", "So11111...").await;
+    ```
+  </Tab>
+</Tabs>
+
+## Common Patterns
+
+### Conditional Loading
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    async function getTokenIfExists(mint: string | null) {
+      if (!mint) return null;
+      
+      return await client.views.tokens.state.get(mint);
+    }
+    ```
+  </Tab>
+
+  <Tab title="React">
+    ```tsx
+    function TokenDetail({ mint }: { mint: string | null }) {
+      const data = useEntity(MyStack, 'Token/state', mint ?? '');
+
+      if (!mint) return <p>Select a token</p>;
+      if (!data) return <p>Loading...</p>;
+      
+      return <p>{data.name}</p>;
+    }
+    ```
+  </Tab>
+
+  <Tab title="Rust">
+    ```rust
+    async fn get_token_if_exists(hs: &HyperStack<MyStack>, mint: Option<&str>) -> Option<Token> {
+        let mint = mint?;
+        hs.views.tokens().state().get(mint).await
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Combining Multiple Views
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    async function getDashboardData() {
+      const [tokens, stats] = await Promise.all([
+        client.views.tokens.list.get(),
+        client.views.stats.state.get('global'),
+      ]);
+
+      return { tokens, stats };
+    }
+    ```
+  </Tab>
+
+  <Tab title="Rust">
+    ```rust
+    async fn get_dashboard_data(hs: &HyperStack<MyStack>) -> (Vec<Token>, Option<Stats>) {
+        let (tokens, stats) = tokio::join!(
+            hs.views.tokens().list().get(),
+            hs.views.stats().state().get("global")
+        );
+        (tokens, stats)
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Subscriptions" icon="rss" href="/using-stacks/subscriptions">
+    Subscribe to real-time updates
+  </Card>
+  <Card title="Transactions" icon="pen-to-square" href="/using-stacks/transactions">
+    Execute blockchain transactions
+  </Card>
+</CardGroup>

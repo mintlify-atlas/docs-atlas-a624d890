@@ -1,0 +1,236 @@
+---
+title: hyperstack-interpreter
+description: AST transformation runtime and VM for HyperStack streaming pipelines
+---
+
+The `hyperstack-interpreter` crate provides the core execution engine for processing Solana blockchain events into typed state projections.
+
+<Info>
+  View on [docs.rs](https://docs.rs/hyperstack-interpreter)
+</Info>
+
+## Installation
+
+```toml
+[dependencies]
+hyperstack-interpreter = "0.2"
+```
+
+## Core Components
+
+### Modules
+
+<ResponseField name="ast" type="module">
+  Type-safe AST definitions for stream specifications
+</ResponseField>
+
+<ResponseField name="compiler" type="module">
+  Compiles AST specs into optimized bytecode
+</ResponseField>
+
+<ResponseField name="vm" type="module">
+  Virtual machine for executing bytecode
+</ResponseField>
+
+<ResponseField name="typescript" type="module">
+  TypeScript SDK generation from stream specs
+</ResponseField>
+
+<ResponseField name="resolvers" type="module">
+  External data resolution (token metadata, etc.)
+</ResponseField>
+
+<ResponseField name="canonical_log" type="module">
+  Structured logging utilities
+</ResponseField>
+
+<ResponseField name="metrics_context" type="module">
+  Field access and metrics tracking
+</ResponseField>
+
+## Public Exports
+
+### Types
+
+<ResponseField name="Mutation" type="struct">
+  Represents a state change with export name, key, patch data, and optional append operations
+  
+  ```rust
+  pub struct Mutation {
+      pub export: String,
+      pub key: Value,
+      pub patch: Value,
+      pub append: Vec<String>,
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="EventWrapper<T>" type="struct">
+  Generic wrapper for event data with context metadata
+  
+  ```rust
+  pub struct EventWrapper<T = Value> {
+      pub timestamp: i64,
+      pub data: T,
+      pub slot: Option<u64>,
+      pub signature: Option<String>,
+  }
+  ```
+  
+  Events captured with `#[event]` are automatically wrapped in this structure.
+</ResponseField>
+
+<ResponseField name="CaptureWrapper<T>" type="struct">
+  Generic wrapper for account capture data with metadata
+  
+  ```rust
+  pub struct CaptureWrapper<T = Value> {
+      pub timestamp: i64,
+      pub account_address: String,
+      pub data: T,
+      pub slot: Option<u64>,
+      pub signature: Option<String>,
+  }
+  ```
+  
+  Accounts captured with `#[capture]` are automatically wrapped in this structure.
+</ResponseField>
+
+### Logging
+
+<ResponseField name="CanonicalLog" type="struct">
+  Structured log message builder
+</ResponseField>
+
+<ResponseField name="LogLevel" type="enum">
+  Log level enumeration (Debug, Info, Warn, Error)
+</ResponseField>
+
+### Metrics
+
+<ResponseField name="MetricsContext" type="struct">
+  Context for tracking field access and metrics
+</ResponseField>
+
+<ResponseField name="FieldAccessor" type="trait">
+  Trait for accessing entity fields by reference
+</ResponseField>
+
+<ResponseField name="FieldRef" type="struct">
+  Reference to a field in an entity
+</ResponseField>
+
+### Resolvers
+
+<ResponseField name="TokenMetadata" type="struct">
+  Resolved token metadata including name, symbol, and URI
+</ResponseField>
+
+<ResponseField name="InstructionContext" type="struct">
+  Context for instruction resolution
+</ResponseField>
+
+<ResponseField name="KeyResolution" type="enum">
+  Result of key resolution (resolved or deferred)
+</ResponseField>
+
+<ResponseField name="ResolveContext" type="struct">
+  Context for external data resolution
+</ResponseField>
+
+<ResponseField name="ReverseLookupUpdater" type="trait">
+  Trait for updating reverse lookup tables
+</ResponseField>
+
+### VM Types
+
+<ResponseField name="UpdateContext" type="struct">
+  Context passed to event handlers containing blockchain metadata
+  
+  ```rust
+  pub struct UpdateContext {
+      pub slot: u64,
+      pub signature: Option<String>,
+      pub timestamp: i64,
+      // ... additional fields
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="VmMemoryStats" type="struct">
+  Memory usage statistics for the VM
+</ResponseField>
+
+<ResponseField name="CapacityWarning" type="struct">
+  Warning when entity capacity is exceeded
+</ResponseField>
+
+<ResponseField name="CleanupResult" type="struct">
+  Result of entity cleanup operations
+</ResponseField>
+
+<ResponseField name="DirtyTracker" type="struct">
+  Tracks which entities have been modified
+</ResponseField>
+
+<ResponseField name="FieldChange" type="struct">
+  Represents a change to a specific field
+</ResponseField>
+
+<ResponseField name="PendingAccountUpdate" type="struct">
+  Account update waiting for resolution
+</ResponseField>
+
+<ResponseField name="PendingQueueStats" type="struct">
+  Statistics about pending updates queue
+</ResponseField>
+
+<ResponseField name="QueuedAccountUpdate" type="struct">
+  Account update in the processing queue
+</ResponseField>
+
+<ResponseField name="ResolverRequest" type="struct">
+  Request for external data resolution
+</ResponseField>
+
+<ResponseField name="StateTableConfig" type="struct">
+  Configuration for entity state tables
+</ResponseField>
+
+## TypeScript Generation
+
+<ResponseField name="TypeScriptCompiler" type="struct">
+  Compiles stream specs into TypeScript SDK code
+  
+  ```rust
+  let config = TypeScriptConfig::default();
+  let compiler = TypeScriptCompiler::new(config);
+  let typescript = compiler.compile(&spec)?;
+  ```
+</ResponseField>
+
+<ResponseField name="TypeScriptConfig" type="struct">
+  Configuration for TypeScript code generation
+</ResponseField>
+
+<ResponseField name="write_typescript_to_file" type="fn">
+  Writes generated TypeScript to a file
+  
+  <ParamField path="spec" type="&TypedStreamSpec" required>
+    The stream specification to compile
+  </ParamField>
+  
+  <ParamField path="path" type="&Path" required>
+    Output file path
+  </ParamField>
+  
+  <ParamField path="config" type="&TypeScriptConfig" required>
+    Generation configuration
+  </ParamField>
+</ResponseField>
+
+## Feature Flags
+
+<ParamField path="otel" type="feature">
+  Enables OpenTelemetry integration for distributed tracing and metrics
+</ParamField>

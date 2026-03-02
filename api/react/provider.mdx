@@ -1,0 +1,396 @@
+---
+title: React Provider
+description: React context provider for HyperStack client management
+---
+
+The `HyperstackProvider` component manages HyperStack client instances and provides them to your React application.
+
+## Importing
+
+```typescript
+import { HyperstackProvider } from 'hyperstack-react';
+```
+
+## Provider Component
+
+<ResponseField name="HyperstackProvider" type="component">
+  Context provider for HyperStack clients
+  
+  Manages client instances, automatic reconnection, and provides access to views throughout your React component tree.
+  
+  ### Props
+  
+  <ParamField path="children" type="ReactNode" required>
+    React children to render
+  </ParamField>
+  
+  <ParamField path="fallback" type="ReactNode" default="null">
+    Fallback UI while connecting
+  </ParamField>
+  
+  <ParamField path="autoConnect" type="boolean" default="true">
+    Automatically connect clients when views are accessed
+  </ParamField>
+  
+  <ParamField path="reconnectIntervals" type="number[]" default="[1000, 2000, 4000, 8000, 16000]">
+    Reconnection backoff intervals in milliseconds
+  </ParamField>
+  
+  <ParamField path="maxReconnectAttempts" type="number" default="5">
+    Maximum reconnection attempts
+  </ParamField>
+  
+  <ParamField path="maxEntriesPerView" type="number | null" default="10000">
+    Maximum entities per view (null = unlimited)
+  </ParamField>
+  
+  <ParamField path="flushIntervalMs" type="number" default="16">
+    Batch update flush interval in milliseconds
+  </ParamField>
+  
+  ### Example
+  
+  ```tsx
+  import { HyperstackProvider } from 'hyperstack-react';
+  
+  function App() {
+    return (
+      <HyperstackProvider
+        autoConnect={true}
+        reconnectIntervals={[1000, 2000, 5000]}
+        maxReconnectAttempts={10}
+        fallback={<div>Connecting to HyperStack...</div>}
+      >
+        <YourApp />
+      </HyperstackProvider>
+    );
+  }
+  ```
+</ResponseField>
+
+## Context Hook
+
+<ResponseField name="useHyperstackContext" type="hook">
+  Access the HyperStack context (low-level API)
+  
+  ```typescript
+  function useHyperstackContext(): HyperstackContextValue
+  ```
+  
+  Most applications should use `useHyperstack` instead.
+  
+  ### Returns
+  
+  <ParamField path="getOrCreateClient" type="function">
+    Get or create a client for a stack
+  </ParamField>
+  
+  <ParamField path="getClient" type="function">
+    Get existing client for a stack
+  </ParamField>
+  
+  <ParamField path="subscribeToClientChanges" type="function">
+    Subscribe to client changes
+  </ParamField>
+  
+  <ParamField path="config" type="HyperstackConfig">
+    Provider configuration
+  </ParamField>
+</ResponseField>
+
+## Connection State Hook
+
+<ResponseField name="useConnectionState" type="hook">
+  Monitor connection state
+  
+  ```typescript
+  function useConnectionState<TStack extends StackDefinition>(
+    stack?: TStack
+  ): ConnectionState | null
+  ```
+  
+  ### Parameters
+  
+  <ParamField path="stack" type="TStack">
+    Stack definition (optional - uses first client if omitted)
+  </ParamField>
+  
+  ### Returns
+  
+  Current connection state or null if not connected
+  
+  ### Example
+  
+  ```tsx
+  import { useConnectionState } from 'hyperstack-react';
+  import { MyStack } from './generated/stack';
+  
+  function ConnectionStatus() {
+    const state = useConnectionState(MyStack);
+    
+    return (
+      <div>
+        Status: {state || 'not connected'}
+      </div>
+    );
+  }
+  ```
+</ResponseField>
+
+## View Hook
+
+<ResponseField name="useView" type="hook">
+  Access typed views for a stack
+  
+  ```typescript
+  function useView<TStack extends StackDefinition>(
+    stack: TStack,
+    urlOverride?: string
+  ): TypedViews<TStack['views']> | null
+  ```
+  
+  ### Parameters
+  
+  <ParamField path="stack" type="TStack" required>
+    Stack definition
+  </ParamField>
+  
+  <ParamField path="urlOverride" type="string">
+    Override stack's default URL
+  </ParamField>
+  
+  ### Returns
+  
+  Typed views object or null if not connected
+  
+  ### Example
+  
+  ```tsx
+  import { useView } from 'hyperstack-react';
+  import { MyStack } from './generated/stack';
+  
+  function UserList() {
+    const views = useView(MyStack);
+    
+    if (!views) return <div>Connecting...</div>;
+    
+    // Use views.users, views.posts, etc.
+    return <div>Connected!</div>;
+  }
+  ```
+</ResponseField>
+
+## Entity Hook
+
+<ResponseField name="useEntity" type="hook">
+  Subscribe to a single entity by key
+  
+  ```typescript
+  function useEntity<TStack extends StackDefinition, TView extends keyof TStack['views']>(
+    stack: TStack,
+    viewName: TView,
+    key: string,
+    options?: ViewHookOptions
+  ): ViewHookResult<T>
+  ```
+  
+  ### Parameters
+  
+  <ParamField path="stack" type="TStack" required>
+    Stack definition
+  </ParamField>
+  
+  <ParamField path="viewName" type="string" required>
+    View name (entity type)
+  </ParamField>
+  
+  <ParamField path="key" type="string" required>
+    Entity key
+  </ParamField>
+  
+  <ParamField path="options" type="ViewHookOptions">
+    Hook options
+  </ParamField>
+  
+  ### Returns
+  
+  <ParamField path="data" type="T | undefined">
+    Entity data
+  </ParamField>
+  
+  <ParamField path="isLoading" type="boolean">
+    Loading state
+  </ParamField>
+  
+  <ParamField path="error" type="Error | undefined">
+    Error if any
+  </ParamField>
+  
+  <ParamField path="refresh" type="() => void">
+    Manually refresh data
+  </ParamField>
+  
+  ### Example
+  
+  ```tsx
+  import { useEntity } from 'hyperstack-react';
+  import { MyStack } from './generated/stack';
+  
+  function UserProfile({ userId }: { userId: string }) {
+    const { data: user, isLoading, error } = useEntity(
+      MyStack,
+      'users',
+      userId
+    );
+    
+    if (isLoading) return <div>Loading...</div>;
+    if (error) return <div>Error: {error.message}</div>;
+    if (!user) return <div>User not found</div>;
+    
+    return (
+      <div>
+        <h1>{user.name}</h1>
+        <p>{user.email}</p>
+      </div>
+    );
+  }
+  ```
+</ResponseField>
+
+## Configuration Types
+
+<ResponseField name="HyperstackConfig" type="interface">
+  Provider configuration
+  
+  ```typescript
+  interface HyperstackConfig {
+    autoConnect?: boolean;
+    reconnectIntervals?: number[];
+    maxReconnectAttempts?: number;
+    maxEntriesPerView?: number | null;
+    flushIntervalMs?: number;
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="ViewHookOptions" type="interface">
+  Options for view hooks
+  
+  ```typescript
+  interface ViewHookOptions {
+    enabled?: boolean;
+    initialData?: unknown;
+    schema?: Schema<unknown>;
+  }
+  ```
+  
+  <ParamField path="enabled" type="boolean" default="true">
+    Enable/disable the hook
+  </ParamField>
+  
+  <ParamField path="initialData" type="unknown">
+    Initial data before first load
+  </ParamField>
+  
+  <ParamField path="schema" type="Schema<T>">
+    Validation schema (e.g., Zod)
+  </ParamField>
+</ResponseField>
+
+<ResponseField name="ViewHookResult" type="interface">
+  Result from view hooks
+  
+  ```typescript
+  interface ViewHookResult<T> {
+    data: T | undefined;
+    isLoading: boolean;
+    error: Error | undefined;
+    refresh: () => void;
+  }
+  ```
+</ResponseField>
+
+## Zustand Adapter
+
+<ResponseField name="ZustandAdapter" type="class">
+  Zustand-based storage adapter for React integration
+  
+  Automatically used by `HyperstackProvider` for optimal React performance.
+  
+  ```typescript
+  const adapter = new ZustandAdapter();
+  ```
+</ResponseField>
+
+<ResponseField name="HyperStackStore" type="type">
+  Zustand store type for HyperStack data
+</ResponseField>
+
+## Example App
+
+```tsx
+import React from 'react';
+import { HyperstackProvider, useConnectionState, useEntity } from 'hyperstack-react';
+import { MyStack } from './generated/stack';
+
+function App() {
+  return (
+    <HyperstackProvider
+      autoConnect={true}
+      fallback={<div>Connecting...</div>}
+    >
+      <Dashboard />
+    </HyperstackProvider>
+  );
+}
+
+function Dashboard() {
+  const connectionState = useConnectionState(MyStack);
+  
+  return (
+    <div>
+      <header>
+        <ConnectionIndicator state={connectionState} />
+      </header>
+      <UserList />
+    </div>
+  );
+}
+
+function ConnectionIndicator({ state }: { state: string | null }) {
+  const colors = {
+    connected: 'green',
+    connecting: 'yellow',
+    reconnecting: 'orange',
+    error: 'red',
+    disconnected: 'gray',
+  };
+  
+  return (
+    <div style={{ color: colors[state || 'disconnected'] }}>
+      {state || 'disconnected'}
+    </div>
+  );
+}
+
+function UserList() {
+  const { data: user, isLoading, error } = useEntity(
+    MyStack,
+    'users',
+    'current-user'
+  );
+  
+  if (isLoading) return <div>Loading user...</div>;
+  if (error) return <div>Error: {error.message}</div>;
+  if (!user) return <div>No user found</div>;
+  
+  return (
+    <div>
+      <h2>Welcome, {user.name}!</h2>
+      <p>Email: {user.email}</p>
+    </div>
+  );
+}
+
+export default App;
+```

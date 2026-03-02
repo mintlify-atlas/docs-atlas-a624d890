@@ -1,0 +1,441 @@
+---
+title: Subscription Management
+description: Manage real-time WebSocket subscriptions and handle connection lifecycle
+---
+
+## Overview
+
+The `SubscriptionRegistry` manages WebSocket subscriptions with automatic reference counting and deduplication. Multiple consumers can subscribe to the same view, and the registry ensures only one WebSocket subscription is created.
+
+## Automatic Subscription Management
+
+When you use view methods like `use()`, `watch()`, or `watchRich()`, subscriptions are automatically created and cleaned up.
+
+```typescript
+const client = await HyperStack.connect(stack);
+
+// Subscription created automatically
+for await (const user of client.views.users.state.use('user-123')) {
+  console.log(user);
+}
+// Subscription cleaned up when loop exits
+```
+
+## SubscriptionRegistry
+
+The registry is accessible via `client.getSubscriptionRegistry()` for advanced use cases.
+
+### subscribe()
+
+Manually create a subscription.
+
+```typescript
+subscribe(subscription: Subscription): UnsubscribeFn
+```
+
+<ParamField path="subscription" type="Subscription" required>
+  Subscription parameters
+</ParamField>
+
+**Returns:** Function to unsubscribe
+
+```typescript
+const registry = client.getSubscriptionRegistry();
+
+const unsubscribe = registry.subscribe({
+  view: 'users.state',
+  key: 'user-123',
+});
+
+// Later...
+unsubscribe();
+```
+
+### unsubscribe()
+
+Manually unsubscribe from a subscription.
+
+```typescript
+unsubscribe(subscription: Subscription): void
+```
+
+### getRefCount()
+
+Get the current reference count for a subscription.
+
+```typescript
+getRefCount(subscription: Subscription): number
+```
+
+```typescript
+const count = registry.getRefCount({
+  view: 'users.state',
+  key: 'user-123',
+});
+console.log(`${count} active consumers`);
+```
+
+### getActiveSubscriptions()
+
+Get all active subscriptions.
+
+```typescript
+getActiveSubscriptions(): Subscription[]
+```
+
+```typescript
+const active = registry.getActiveSubscriptions();
+console.log(`${active.length} active subscriptions`);
+active.forEach(sub => {
+  console.log(`- ${sub.view}:${sub.key}`);
+});
+```
+
+### clear()
+
+Clear all subscriptions.
+
+```typescript
+clear(): void
+```
+
+```typescript
+registry.clear();
+```
+
+## Subscription Type
+
+```typescript
+interface Subscription {
+  view: string;
+  key?: string;
+  partition?: string;
+  filters?: Record<string, string>;
+  take?: number;
+  skip?: number;
+}
+```
+
+<ParamField path="view" type="string" required>
+  View path to subscribe to (e.g., `'users.state'`)
+</ParamField>
+
+<ParamField path="key" type="string">
+  Entity key for state views. Omit for list views
+</ParamField>
+
+<ParamField path="partition" type="string">
+  Partition identifier for multi-tenant systems
+</ParamField>
+
+<ParamField path="filters" type="Record<string, string>">
+  Filter criteria for the subscription
+</ParamField>
+
+<ParamField path="take" type="number">
+  Maximum number of entities to receive
+</ParamField>
+
+<ParamField path="skip" type="number">
+  Number of entities to skip (pagination)
+</ParamField>
+
+## Reference Counting
+
+The registry uses reference counting to deduplicate subscriptions.
+
+```typescript
+// First subscription - creates WebSocket subscription
+const unsub1 = registry.subscribe({ view: 'users.state', key: 'user-123' });
+console.log(registry.getRefCount({ view: 'users.state', key: 'user-123' }));
+// Output: 1
+
+// Second subscription to same entity - reuses existing subscription
+const unsub2 = registry.subscribe({ view: 'users.state', key: 'user-123' });
+console.log(registry.getRefCount({ view: 'users.state', key: 'user-123' }));
+// Output: 2
+
+// First unsubscribe - keeps subscription alive
+unsub1();
+console.log(registry.getRefCount({ view: 'users.state', key: 'user-123' }));
+// Output: 1
+
+// Second unsubscribe - removes WebSocket subscription
+unsub2();
+console.log(registry.getRefCount({ view: 'users.state', key: 'user-123' }));
+// Output: 0
+```
+
+## Connection Management
+
+The `ConnectionManager` handles WebSocket connection lifecycle and is accessible via `client.getConnection()`.
+
+### Connection States
+
+```typescript
+type ConnectionState =
+  | 'disconnected'
+  | 'connecting'
+  | 'connected'
+  | 'reconnecting'
+  | 'error';
+```
+
+### Monitoring Connection State
+
+```typescript
+const unsubscribe = client.onConnectionStateChange((state, error) => {
+  switch (state) {
+    case 'connecting':
+      console.log('Establishing connection...');
+      break;
+    case 'connected':
+      console.log('Connected successfully');
+      break;
+    case 'reconnecting':
+      console.log('Connection lost, reconnecting...');
+      break;
+    case 'error':
+      console.error('Connection error:', error);
+      break;
+    case 'disconnected':
+      console.log('Disconnected');
+      break;
+  }
+});
+```
+
+### Manual Connection Control
+
+```typescript
+// Connect without auto-connect
+const client = await HyperStack.connect(stack, {
+  autoReconnect: false,
+});
+
+// Manually connect
+await client.connect();
+
+// Check connection status
+if (client.isConnected()) {
+  console.log('Ready to use');
+}
+
+// Manually disconnect
+client.disconnect();
+```
+
+## Subscription Lifecycle
+
+### View Subscriptions
+
+When using typed views, subscriptions follow this lifecycle:
+
+```typescript
+// 1. Create subscription
+const iterator = client.views.users.state.use('user-123');
+
+// 2. Registry increments ref count and subscribes to WebSocket
+for await (const user of iterator) {
+  console.log(user);
+  
+  // 3. Break to unsubscribe
+  if (someCondition) break;
+}
+
+// 4. Registry decrements ref count and unsubscribes if count reaches 0
+```
+
+### Manual Cleanup
+
+```typescript
+const iterator = client.views.users.state.use('user-123');
+
+// Force cleanup
+await iterator.return?.();
+```
+
+## Stream Creation
+
+Low-level stream creation functions for advanced use cases.
+
+### createUpdateStream()
+
+```typescript
+function createUpdateStream<T>(
+  storage: StorageAdapter,
+  subscriptionRegistry: SubscriptionRegistry,
+  subscription: Subscription,
+  key?: string
+): AsyncIterable<Update<T>>
+```
+
+Creates an async iterable that yields `Update<T>` objects.
+
+### createRichUpdateStream()
+
+```typescript
+function createRichUpdateStream<T>(
+  storage: StorageAdapter,
+  subscriptionRegistry: SubscriptionRegistry,
+  subscription: Subscription,
+  key?: string
+): AsyncIterable<RichUpdate<T>>
+```
+
+Creates an async iterable that yields `RichUpdate<T>` objects with before/after snapshots.
+
+### createEntityStream()
+
+```typescript
+function createEntityStream<T>(
+  storage: StorageAdapter,
+  subscriptionRegistry: SubscriptionRegistry,
+  subscription: Subscription,
+  options?: WatchOptions,
+  key?: string
+): AsyncIterable<T>
+```
+
+Creates an async iterable that yields entity objects directly.
+
+## Reconnection Behavior
+
+HyperStack automatically reconnects with exponential backoff when the connection is lost.
+
+### Default Configuration
+
+```typescript
+const DEFAULT_CONFIG = {
+  reconnectIntervals: [1000, 2000, 4000, 8000, 16000], // ms
+  maxReconnectAttempts: 5,
+};
+```
+
+### Custom Reconnection
+
+```typescript
+const client = await HyperStack.connect(stack, {
+  autoReconnect: true,
+  reconnectIntervals: [500, 1000, 2000, 5000],
+  maxReconnectAttempts: 10,
+});
+```
+
+### Disable Reconnection
+
+```typescript
+const client = await HyperStack.connect(stack, {
+  autoReconnect: false,
+});
+
+// Handle reconnection manually
+client.onConnectionStateChange(async (state) => {
+  if (state === 'error') {
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    await client.connect();
+  }
+});
+```
+
+## Subscription Reactivation
+
+When reconnecting, HyperStack automatically resubscribes to all active subscriptions.
+
+```typescript
+const client = await HyperStack.connect(stack);
+
+// Create subscriptions
+const stream1 = client.views.users.state.use('user-123');
+const stream2 = client.views.posts.list.use();
+
+// Connection drops and reconnects...
+// Both subscriptions are automatically reactivated
+```
+
+## Advanced Patterns
+
+### Shared Subscriptions
+
+Share a single subscription across multiple components.
+
+```typescript
+class SubscriptionManager {
+  private subscriptions = new Map<string, AsyncIterable<any>>();
+
+  subscribe<T>(view: string, key: string): AsyncIterable<T> {
+    const id = `${view}:${key}`;
+    
+    if (!this.subscriptions.has(id)) {
+      const stream = client.views[view].state.use(key);
+      this.subscriptions.set(id, stream);
+    }
+    
+    return this.subscriptions.get(id)!;
+  }
+}
+```
+
+### Conditional Subscriptions
+
+```typescript
+function useConditionalSubscription(userId: string | null) {
+  const [user, setUser] = useState(null);
+
+  useEffect(() => {
+    if (!userId) return;
+
+    const controller = new AbortController();
+
+    (async () => {
+      try {
+        for await (const u of client.views.users.state.use(userId)) {
+          if (controller.signal.aborted) break;
+          setUser(u);
+        }
+      } catch (err) {
+        if (!controller.signal.aborted) throw err;
+      }
+    })();
+
+    return () => controller.abort();
+  }, [userId]);
+
+  return user;
+}
+```
+
+## Type Exports
+
+```typescript
+import type {
+  Subscription,
+  UnsubscribeFn,
+  ConnectionState,
+  ConnectionStateCallback,
+} from '@hyperstack/core';
+
+import {
+  SubscriptionRegistry,
+  ConnectionManager,
+} from '@hyperstack/core';
+```
+
+## Best Practices
+
+1. **Let the framework manage subscriptions** - Use view methods instead of manual registry calls
+2. **Clean up properly** - Always unsubscribe when components unmount
+3. **Monitor connection state** - Show loading/offline UI based on connection state
+4. **Handle reconnection gracefully** - Don't assume subscriptions remain active forever
+5. **Use reference counting** - Let multiple components subscribe to the same data safely
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Working with Views" icon="eye" href="/sdks/typescript/views">
+    Learn about view subscription methods
+  </Card>
+  <Card title="Storage Adapters" icon="database" href="/sdks/typescript/storage">
+    Understand how data is stored and updated
+  </Card>
+</CardGroup>

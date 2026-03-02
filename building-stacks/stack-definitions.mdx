@@ -1,0 +1,285 @@
+---
+title: Stack Definitions
+description: Introduction to the Hyperstack Rust DSL for defining streaming data specifications
+---
+
+Hyperstack uses a declarative Rust DSL (Domain Specific Language) to define how on-chain Solana data should be transformed, aggregated, and streamed to your application. Instead of writing complex ETL pipelines, you simply declare the final state you want, and Hyperstack handles the rest.
+
+---
+
+## Why Declarative?
+
+Building data pipelines for Solana typically involves manual account parsing, complex event handling, and managing state synchronization. Hyperstack replaces this imperative approach with a declarative model:
+
+| Imperative Approach (Traditional)             | Declarative Approach (Hyperstack)                 |
+| --------------------------------------------- | ------------------------------------------------- |
+| Write custom decoding logic for every account | Use `#[map]` to link IDL fields to your state     |
+| Manually track and sum event values           | Use `#[aggregate(strategy = Sum)]`                |
+| Manage WebSocket connections and state diffs  | Define entities and let Hyperstack stream updates |
+| Build custom backend services for data        | Deploy a stack and use generated SDKs             |
+
+---
+
+## Anatomy of a Stack Definition
+
+A Hyperstack definition is a Rust module annotated with `#[hyperstack]`. Inside this module, you define **Entities** — the structured data objects your application will consume.
+
+### Real Example: ORE Mining Stack
+
+Here's a simplified version of the real ORE stack:
+
+```rust
+use hyperstack::prelude::*;
+
+#[hyperstack(idl = "idl/ore.json")]
+pub mod ore_stream {
+    use hyperstack::macros::Stream;
+    use serde::{Deserialize, Serialize};
+
+    // OreRound is the main entity -- one instance per mining round.
+    // The `latest` view sorts rounds descending by round_id.
+    #[entity(name = "OreRound")]
+    #[view(name = "latest", sort_by = "id.round_id", order = "desc")]
+    pub struct OreRound {
+        pub id: RoundId,
+        pub state: RoundState,
+        pub metrics: RoundMetrics,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, Stream)]
+    pub struct RoundId {
+        // Primary key -- set once, never overwritten
+        #[map(ore_sdk::accounts::Round::id, primary_key, strategy = SetOnce)]
+        pub round_id: u64,
+
+        #[map(ore_sdk::accounts::Round::__account_address, lookup_index, strategy = SetOnce)]
+        pub round_address: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, Stream)]
+    pub struct RoundState {
+        // LastWrite: overwritten each time the account updates
+        #[map(ore_sdk::accounts::Round::motherlode, strategy = LastWrite)]
+        pub motherlode: Option<u64>,
+
+        #[map(ore_sdk::accounts::Round::total_deployed, strategy = LastWrite)]
+        pub total_deployed: Option<u64>,
+
+        // Computed field: derived from other fields in this entity
+        #[computed(state.total_deployed.map(|d| d / 1_000_000_000))]
+        pub total_deployed_sol: Option<u64>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, Stream)]
+    pub struct RoundMetrics {
+        // Aggregate: counts Deploy instructions referencing this round
+        #[aggregate(from = ore_sdk::instructions::Deploy, strategy = Count, lookup_by = accounts::round)]
+        pub deploy_count: Option<u64>,
+    }
+}
+```
+
+:::note[SDK Module Naming]
+Hyperstack derives the program name from the IDL metadata and generates a typed SDK module named `{name}_sdk`. The ORE IDL produces `ore_sdk::accounts::*` and `ore_sdk::instructions::*`. All `#[map]` and `#[aggregate]` paths use these prefixes.
+:::
+
+---
+
+## Key Components
+
+### 1. `#[hyperstack]` Module
+
+The container for your definition. The `idl` argument accepts a single path or an array for multi-program stacks:
+
+```rust
+// Single program
+#[hyperstack(idl = "idl/ore.json")]
+
+// Multiple programs
+#[hyperstack(idl = ["idl/ore.json", "idl/entropy.json"])]
+```
+
+### 2. `#[entity]` Struct
+
+An entity represents a distinct concept in your app's data model — a round, a miner, a treasury. Each entity declares exactly which on-chain fields belong to it.
+
+```rust
+#[entity(name = "OreRound")]
+pub struct OreRound {
+    pub id: RoundId,
+    pub state: RoundState,
+}
+```
+
+A stack can have many entities. The ORE stack has three: `OreRound`, `OreTreasury`, and `OreMiner`.
+
+### 3. `#[view]` — Query Projections
+
+A view is a projection over an entity's data. It defines what slice of the stream a client subscribes to.
+
+```rust
+#[view(name = "latest", sort_by = "id.round_id", order = "desc")]
+```
+
+Every entity gets:
+- `state` — One item by key
+- `list` — All items
+
+Custom views like `latest` add sorted or filtered projections.
+
+### 4. `#[derive(Stream)]` Structs
+
+Nested structs containing the actual field mappings. Must derive `Stream`, `Debug`, `Clone`, `Serialize`, and `Deserialize`:
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize, Stream)]
+pub struct RoundState {
+    #[map(ore_sdk::accounts::Round::total_deployed, strategy = LastWrite)]
+    pub total_deployed: Option<u64>,
+}
+```
+
+### 5. Primary Key
+
+Every entity needs one (annotated `primary_key`). This is how Hyperstack tracks individual entity instances:
+
+```rust
+#[map(ore_sdk::accounts::Round::id, primary_key, strategy = SetOnce)]
+pub round_id: u64,
+```
+
+---
+
+## Mapping Types
+
+Hyperstack provides several mapping attributes to populate your entity fields:
+
+| Attribute             | Source              | Description                                                                                                                                                   |
+| --------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `#[map]`              | Account State       | Tracks fields within a Solana account. Updates whenever the account changes. Supports `lookup_index(register_from = [...])` for cross-account PDA resolution. |
+| `#[from_instruction]` | Instructions        | Extracts arguments or account keys from a specific instruction.                                                                                               |
+| `#[aggregate]`        | Events/Instructions | Computes running values (Sum, Count, etc.) from a stream of events.                                                                                           |
+| `#[event]`            | Events              | Captures specific instructions as a log of events within the entity.                                                                                          |
+| `#[snapshot]`         | Account State       | Captures the entire state of an account at a specific point in time.                                                                                          |
+| `#[computed]`         | Local Fields        | Derives a new value by performing calculations on other fields in the same entity.                                                                            |
+| `#[derive_from]`      | Instructions        | Populates fields by deriving data from instruction context.                                                                                                   |
+
+---
+
+## Population Strategies
+
+When data arrives, **Strategies** determine how the field value is updated:
+
+| Strategy      | Behavior                                                              |
+| ------------- | --------------------------------------------------------------------- |
+| `LastWrite`   | (Default) Overwrites the field with the latest value.                 |
+| `SetOnce`     | Sets the value once and ignores subsequent updates (perfect for IDs). |
+| `Sum`         | Adds the incoming value to the existing total.                        |
+| `Count`       | Increments the total by 1 for every matching event.                   |
+| `Append`      | Adds the incoming value to a list (creating an event log).            |
+| `Max` / `Min` | Keeps only the highest or lowest value seen.                          |
+
+See [Population Strategies](/building-stacks/strategies) for detailed usage.
+
+---
+
+## Multi-Program Stacks
+
+A single stack can consume data from multiple Solana programs by passing an array of IDL files:
+
+```rust
+#[hyperstack(idl = ["idl/ore.json", "idl/entropy.json"])]
+pub mod ore_stream {
+    // ore_sdk::accounts::* and ore_sdk::instructions::* are available
+    // entropy_sdk::accounts::* and entropy_sdk::instructions::* are available
+}
+```
+
+Each IDL generates its own namespaced SDK module (e.g., `ore_sdk`, `entropy_sdk`). You can map fields from any program's accounts and reference instructions from any program.
+
+To link accounts across programs, use `lookup_index(register_from = [...])` — see [Rust DSL](/building-stacks/rust-dsl) for the full syntax.
+
+---
+
+## Real Example: Cross-Program Linking
+
+From the ORE stack, linking the Entropy program's randomness to ORE rounds:
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize, Stream)]
+pub struct EntropyState {
+    #[map(entropy_sdk::accounts::Var::value,
+          lookup_index(register_from = [
+              (ore_sdk::instructions::Deploy, accounts::entropyVar, accounts::round),
+              (ore_sdk::instructions::Reset, accounts::entropyVar, accounts::round)
+          ]),
+          when = entropy_sdk::instructions::Reveal,
+          condition = "value != ZERO_32",
+          strategy = LastWrite,
+          transform = Base58Encode)]
+    pub entropy_value: Option<String>,
+}
+```
+
+This tells Hyperstack:
+1. When `Deploy` or `Reset` instructions run, register the mapping between `entropyVar` address and `round` address
+2. When `Var` accounts update (triggered by `Reveal` instruction), route updates to the correct `OreRound` entity
+3. Only include updates where `value != ZERO_32`
+4. Transform the raw bytes to Base58 encoding
+
+---
+
+## WebSocket Frames
+
+The stack definition produces WebSocket frames with the following structure.
+
+An `upsert` frame contains the full entity state:
+
+```json
+{
+  "op": "upsert",
+  "mode": "state",
+  "entity": "OreRound",
+  "key": "42",
+  "data": {
+    "id": {
+      "round_id": 42,
+      "round_address": "..."
+    },
+    "state": {
+      "total_deployed": 1500000000,
+      "motherlode": 150000000000
+    },
+    "metrics": {
+      "deploy_count": 1250
+    }
+  }
+}
+```
+
+When only specific fields change, a `patch` frame contains just the updated values:
+
+```json
+{
+  "op": "patch",
+  "mode": "state",
+  "entity": "OreRound",
+  "key": "42",
+  "data": {
+    "state": {
+      "total_deployed": 1520000000
+    }
+  }
+}
+```
+
+The SDK merges patches into local state automatically, so your application always sees the complete entity.
+
+---
+
+## Next Steps
+
+- [Rust DSL](/building-stacks/rust-dsl) — Complete macro reference
+- [Population Strategies](/building-stacks/strategies) — Deep dive into update strategies
+- [Resolvers](/building-stacks/resolvers) — Enrich entities with off-chain data
+- [Your First Stack](/building-stacks/getting-started) — Complete working tutorial

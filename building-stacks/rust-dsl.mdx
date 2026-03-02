@@ -1,0 +1,442 @@
+---
+title: Rust DSL Reference
+description: Complete reference for Hyperstack's Rust DSL macros and attributes
+---
+
+The Hyperstack Rust DSL (Domain Specific Language) is a declarative syntax for defining streaming data pipelines. Using procedural macros, you describe **what** data you want from Solana, not **how** to fetch it.
+
+---
+
+## Overview
+
+Instead of writing complex ETL pipelines with manual account parsing and event handling, the DSL lets you define:
+
+- **Entities** — Structured data objects that project on-chain state
+- **Field Mappings** — How data flows from Solana accounts into your entities
+- **Aggregations** — Computed metrics that update automatically
+- **Resolvers** — External data (like token metadata) enriched automatically
+- **Strategies** — How incoming data merges with existing state
+
+The macros transform your Rust code into a JSON-based stack spec (`.stack.json`), which Hyperstack compiles into optimized bytecode for real-time execution.
+
+---
+
+## Module-Level Macros
+
+### `#[hyperstack]`
+
+The entry point for any stack definition. Must be applied to a `pub mod`.
+
+```rust
+#[hyperstack(idl = "idl/ore.json")]
+pub mod ore_stream {
+    // Entity definitions...
+}
+```
+
+**Arguments:**
+
+| Argument        | Type                | Required | Description                                                                                                                               |
+| --------------- | ------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `idl`           | `string` \| `array` | No\*     | Path(s) to Anchor IDL JSON file(s) relative to `Cargo.toml`. Use an array for multi-program stacks: `idl = ["ore.json", "entropy.json"]`. |
+| `proto`         | `string` \| `array` | No\*     | Path(s) to `.proto` files for Protobuf-based streams.                                                                                     |
+| `skip_decoders` | `bool`              | No       | If true, skips generating instruction decoders.                                                                                           |
+
+*\* Either `idl` or `proto` must be provided.*
+
+**Multi-program example:**
+
+```rust
+#[hyperstack(idl = ["idl/ore.json", "idl/entropy.json"])]
+pub mod ore_stream {
+    // Both ore_sdk::* and entropy_sdk::* are available
+}
+```
+
+---
+
+## Entity-Level Macros
+
+### `#[entity]`
+
+Defines a struct as a Hyperstack entity (state projection).
+
+```rust
+#[entity(name = "OreRound")]
+pub struct OreRound {
+    pub id: RoundId,
+    pub state: RoundState,
+}
+```
+
+**Arguments:**
+
+| Argument | Type     | Required | Description                                              |
+| -------- | -------- | -------- | -------------------------------------------------------- |
+| `name`   | `string` | No       | Custom name for the entity. Defaults to the struct name. |
+
+### `#[view]`
+
+Defines queryable views for the entity. Every entity gets `state` and `list` by default.
+
+```rust
+#[view(name = "latest", sort_by = "id.round_id", order = "desc")]
+```
+
+**Arguments:**
+
+| Argument  | Type     | Required | Description                                    |
+| --------- | -------- | -------- | ---------------------------------------------- |
+| `name`    | `string` | Yes      | View name (used in SDK: `views.Entity.name`)   |
+| `sort_by` | `string` | No       | Field path to sort by (e.g., `"id.round_id"`)  |
+| `order`   | `string` | No       | Sort order: `"asc"` or `"desc"` (default: asc) |
+
+---
+
+## Field-Level Macros
+
+### `#[map]`
+
+Maps a field from a Solana account to an entity field.
+
+```rust
+#[map(ore_sdk::accounts::Round::total_deployed, strategy = LastWrite)]
+pub total_deployed: Option<u64>,
+```
+
+**Arguments:**
+
+| Argument         | Type           | Required | Description                                                      |
+| ---------------- | -------------- | -------- | ---------------------------------------------------------------- |
+| `from`           | `path`         | Yes\*    | Source account field (e.g., `AccountType::field_name`)           |
+| `primary_key`    | `bool`         | No       | Marks this field as the primary key                              |
+| `lookup_index`   | `bool` \| `fn` | No       | Creates a lookup index (see cross-account resolution below)      |
+| `strategy`       | `Strategy`     | No       | Update strategy (default: `SetOnce`)                             |
+| `transform`      | `Transform`    | No       | Transformation to apply (e.g., `Base58Encode`, `ui_amount(...)`) |
+| `when`           | `instruction`  | No       | Only update when this instruction occurs                         |
+| `condition`      | `string`       | No       | Boolean expression filter (e.g., `"value != ZERO_32"`)           |
+| `emit`           | `bool`         | No       | If false, field is computed but not sent to clients              |
+| `stop`           | `instruction`  | No       | Stop updating when this instruction occurs                       |
+| `stop_lookup_by` | `field`        | No       | Account reference for stop instruction                           |
+
+*\* First positional argument is the source path*
+
+**Primary key example:**
+
+```rust
+#[map(ore_sdk::accounts::Round::id, primary_key, strategy = SetOnce)]
+pub round_id: u64,
+```
+
+**Transform example:**
+
+```rust
+#[map(ore_sdk::accounts::Round::motherlode, strategy = LastWrite,
+      transform = ui_amount(ore_metadata.decimals))]
+pub motherlode: Option<f64>,
+```
+
+**Conditional update example:**
+
+```rust
+#[map(entropy_sdk::accounts::Var::value,
+      when = entropy_sdk::instructions::Reveal,
+      condition = "value != ZERO_32",
+      strategy = LastWrite)]
+pub entropy_value: Option<String>,
+```
+
+### `#[aggregate]`
+
+Computes running values from instructions.
+
+```rust
+#[aggregate(from = ore_sdk::instructions::Deploy, strategy = Count, lookup_by = accounts::round)]
+pub deploy_count: Option<u64>,
+```
+
+**Arguments:**
+
+| Argument    | Type              | Required | Description                                                    |
+| ----------- | ----------------- | -------- | -------------------------------------------------------------- |
+| `from`      | `path` \| `array` | Yes      | Instruction(s) to aggregate from                               |
+| `field`     | `field`           | No       | Field to aggregate (`accounts::name` or `args::name`)          |
+| `strategy`  | `Strategy`        | Yes      | `Sum`, `Count`, `Min`, `Max`, `UniqueCount`                    |
+| `lookup_by` | `field`           | No       | Account reference to resolve entity (e.g., `accounts::round`)  |
+| `condition` | `string`          | No       | Boolean expression (e.g., `"amount > 1_000_000"`)              |
+| `transform` | `Transform`       | No       | Transform before aggregating                                   |
+
+**Count example:**
+
+```rust
+#[aggregate(from = ore_sdk::instructions::Deploy, strategy = Count, lookup_by = accounts::round)]
+pub deploy_count: Option<u64>,
+```
+
+**Sum example:**
+
+```rust
+#[aggregate(from = ore_sdk::instructions::Deploy, field = args::amount, strategy = Sum, lookup_by = accounts::round)]
+pub total_deployed_amount: Option<u64>,
+```
+
+### `#[computed]`
+
+Derives a field from other fields in the same entity.
+
+```rust
+#[computed(state.total_deployed.map(|d| d / 1_000_000_000))]
+pub total_deployed_sol: Option<u64>,
+```
+
+**Available in expressions:**
+
+- Other fields in the entity (by group name: `state.field_name`, `id.field_name`)
+- Resolver fields (e.g., `ore_metadata.decimals`)
+- Special variables: `__timestamp`, `__slot`, `__signature`
+- Resolver methods: `TokenMetadata::ui_amount(raw, decimals)`
+
+**Complex example from ORE stack:**
+
+```rust
+#[computed({
+    let expires_at_slot = state.expires_at.unwrap_or(0) as u64;
+    let current_slot = __slot;
+    if current_slot > 0 && expires_at_slot > current_slot {
+        Some(__timestamp + (((expires_at_slot - current_slot) * 400 / 1000) as i64))
+    } else {
+        None
+    }
+})]
+pub estimated_expires_at_unix: Option<i64>,
+```
+
+### `#[snapshot]`
+
+Captures the entire state of an account.
+
+```rust
+#[snapshot(strategy = LastWrite, transforms = [(authority, Base58Encode)])]
+pub miner_snapshot: Option<ore_sdk::accounts::Miner>,
+```
+
+**Arguments:**
+
+| Argument     | Type       | Required | Description                                                  |
+| ------------ | ---------- | -------- | ------------------------------------------------------------ |
+| `from`       | `path`     | No       | Source account type (inferred from field type if omitted)    |
+| `strategy`   | `Strategy` | No       | Only `SetOnce` or `LastWrite` allowed                        |
+| `transforms` | `array`    | No       | List of `(field, Transform)` tuples for specific sub-fields  |
+
+**Example with transforms:**
+
+```rust
+#[snapshot(strategy = LastWrite, transforms = [(authority, Base58Encode), (executor, Base58Encode)])]
+pub automation_snapshot: Option<ore_sdk::accounts::Automation>,
+```
+
+### `#[event]`
+
+Captures multiple fields from an instruction as a structured event.
+
+```rust
+#[event(
+    from = PlaceTrade,
+    fields = [amount, accounts::user],
+    strategy = Append
+)]
+pub trades: Vec<TradeEvent>,
+```
+
+**Arguments:**
+
+| Argument     | Type       | Required | Description                                                                                  |
+| ------------ | ---------- | -------- | -------------------------------------------------------------------------------------------- |
+| `from`       | `path`     | Yes      | The source instruction type                                                                  |
+| `fields`     | `array`    | Yes      | List of fields to capture (`accounts::name`, `args::name`)                                   |
+| `strategy`   | `Strategy` | No       | Update strategy (typically `Append`)                                                         |
+| `transforms` | `array`    | No       | List of `(field, Transform)` tuples                                                          |
+| `lookup_by`  | `field`    | No       | Account reference to resolve entity                                                          |
+
+### `#[resolve]`
+
+Attaches a resolver to fetch off-chain data.
+
+```rust
+#[resolve(address = "oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp")]
+pub ore_metadata: Option<TokenMetadata>,
+```
+
+**Arguments:**
+
+| Argument  | Type     | Required | Description                                      |
+| --------- | -------- | -------- | ------------------------------------------------ |
+| `address` | `string` | Yes      | The address to resolve (e.g., mint address)      |
+
+**Available resolvers:**
+
+- `TokenMetadata` — Fetches SPL token metadata (name, symbol, decimals, logo)
+
+See [Resolvers](/building-stacks/resolvers) for complete reference.
+
+### `#[derive_from]`
+
+Derives values from instruction metadata.
+
+```rust
+#[derive_from(from = [Buy, Sell], field = __timestamp)]
+pub last_updated: i64,
+```
+
+**Special fields:**
+
+| Field         | Description                          |
+| ------------- | ------------------------------------ |
+| `__timestamp` | Unix timestamp of the block          |
+| `__slot`      | Slot number                          |
+| `__signature` | Transaction signature (Base58)       |
+
+---
+
+## Cross-Account Resolution
+
+### `lookup_index(register_from = [...])`
+
+When an entity includes fields from a secondary account (one that doesn't store the primary key), use `register_from` to tell Hyperstack how to map addresses.
+
+```rust
+#[map(entropy_sdk::accounts::Var::end_at,
+      lookup_index(register_from = [
+          (ore_sdk::instructions::Deploy, accounts::entropyVar, accounts::round),
+          (ore_sdk::instructions::Reset, accounts::entropyVar, accounts::round)
+      ]),
+      strategy = LastWrite)]
+pub expires_at: Option<u64>,
+```
+
+Each tuple specifies:
+1. **Instruction** — When to register the mapping
+2. **PDA field** — The secondary account address
+3. **Primary key field** — The entity's primary key
+
+When `Deploy` or `Reset` instructions run, Hyperstack registers `entropyVar_address → round_address`. Subsequent `Var` account updates are routed to the correct `OreRound` entity.
+
+**Real example from ORE stack:**
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize, Stream)]
+pub struct RoundTreasury {
+    #[map(ore_sdk::accounts::Treasury::motherlode,
+          lookup_index(register_from = [
+              (ore_sdk::instructions::Reset, accounts::treasury, accounts::roundNext)
+          ]),
+          stop = ore_sdk::instructions::Reset,
+          stop_lookup_by = accounts::round,
+          strategy = SetOnce,
+          transform = ui_amount(ore_metadata.decimals))]
+    pub motherlode: Option<f64>,
+}
+```
+
+This:
+1. Registers `treasury → roundNext` mapping during `Reset` instruction
+2. Updates the field with the treasury's motherlode value (as UI amount)
+3. Stops updating when `Reset` is called for this specific round
+
+---
+
+## Population Strategies
+
+| Strategy      | Behavior                     | Example Use              |
+| ------------- | ---------------------------- | ------------------------ |
+| `LastWrite`   | Overwrite with latest        | Current balances         |
+| `SetOnce`     | Write only if empty          | IDs, creation timestamps |
+| `Sum`         | Add to existing total        | Volume, TVL              |
+| `Count`       | Increment by 1               | Trade count              |
+| `Append`      | Add to list                  | Event history            |
+| `Max` / `Min` | Keep extreme value           | Price highs/lows         |
+| `UniqueCount` | Count distinct values        | Active users             |
+| `Merge`       | Merge object keys            | Configuration maps       |
+
+See [Population Strategies](/building-stacks/strategies) for detailed usage.
+
+---
+
+## Transformations
+
+| Transform        | Description                                          | Example                                |
+| ---------------- | ---------------------------------------------------- | -------------------------------------- |
+| `Base58Encode`   | Encode bytes to Base58 string                        | `transform = Base58Encode`             |
+| `Base58Decode`   | Decode Base58 string to bytes                        | `transform = Base58Decode`             |
+| `HexEncode`      | Encode bytes to Hex string                           | `transform = HexEncode`                |
+| `HexDecode`      | Decode Hex string to bytes                           | `transform = HexDecode`                |
+| `ToString`       | Convert value to string                              | `transform = ToString`                 |
+| `ToNumber`       | Convert value to number                              | `transform = ToNumber`                 |
+| `ui_amount(...)` | Convert raw token amount to UI amount using decimals | `transform = ui_amount(9)`             |
+|                  |                                                      | `transform = ui_amount(meta.decimals)` |
+
+**Transform with resolver:**
+
+```rust
+#[map(ore_sdk::accounts::Round::motherlode, strategy = LastWrite,
+      transform = ui_amount(ore_metadata.decimals))]
+pub motherlode: Option<f64>,
+```
+
+---
+
+## Complete Example: OreMiner Entity
+
+From the real ORE stack:
+
+```rust
+#[entity(name = "OreMiner")]
+pub struct OreMiner {
+    pub id: MinerId,
+    pub rewards: MinerRewards,
+    pub state: MinerState,
+
+    #[snapshot(strategy = LastWrite, transforms = [(authority, Base58Encode)])]
+    pub miner_snapshot: Option<ore_sdk::accounts::Miner>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Stream)]
+pub struct MinerId {
+    // Both Miner and Automation accounts share authority as identity
+    #[map([ore_sdk::accounts::Miner::authority, ore_sdk::accounts::Automation::authority], 
+          primary_key, strategy = SetOnce, transform = Base58Encode)]
+    pub authority: String,
+
+    #[map(ore_sdk::accounts::Miner::__account_address, lookup_index, strategy = SetOnce)]
+    pub miner_address: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Stream)]
+pub struct MinerRewards {
+    #[map(ore_sdk::accounts::Miner::rewards_sol, strategy = LastWrite)]
+    pub rewards_sol: Option<u64>,
+
+    #[map(ore_sdk::accounts::Miner::rewards_ore, strategy = LastWrite)]
+    pub rewards_ore: Option<u64>,
+
+    #[map(ore_sdk::accounts::Miner::lifetime_deployed, strategy = LastWrite)]
+    pub lifetime_deployed: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Stream)]
+pub struct MinerState {
+    #[map(ore_sdk::accounts::Miner::round_id, strategy = LastWrite)]
+    pub round_id: Option<u64>,
+
+    #[map(ore_sdk::accounts::Miner::checkpoint_id, strategy = LastWrite)]
+    pub checkpoint_id: Option<u64>,
+}
+```
+
+---
+
+## Next Steps
+
+- [Population Strategies](/building-stacks/strategies) — Deep dive into update strategies
+- [Resolvers](/building-stacks/resolvers) — Enrich entities with off-chain data
+- [Your First Stack](/building-stacks/getting-started) — Complete working tutorial

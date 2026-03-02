@@ -1,0 +1,424 @@
+---
+title: hyperstack-typescript
+description: Core TypeScript client for HyperStack streaming servers
+---
+
+The `hyperstack-typescript` package provides the core client implementation for connecting to HyperStack servers and consuming real-time entity updates in TypeScript/JavaScript applications.
+
+<Info>
+  View on [npm](https://www.npmjs.com/package/hyperstack-typescript)
+</Info>
+
+## Installation
+
+```bash
+npm install hyperstack-typescript
+```
+
+## Quick Start
+
+```typescript
+import { HyperStack } from 'hyperstack-typescript';
+import { MyStack } from './generated/stack';
+
+const client = await HyperStack.connect(MyStack, {
+  autoReconnect: true,
+});
+
+for await (const entity of client.views.users.list.use()) {
+  console.log('User:', entity);
+}
+```
+
+## Core Exports
+
+### Client
+
+<ResponseField name="HyperStack" type="class">
+  Main client for connecting to HyperStack servers
+  
+  ### Static Methods
+  
+  <ParamField path="connect" type="async function">
+    Connect to a HyperStack server
+    
+    ```typescript
+    static async connect<TStack extends StackDefinition>(
+      stack: TStack,
+      options?: HyperStackOptions<TStack>
+    ): Promise<HyperStack<TStack>>
+    ```
+  </ParamField>
+  
+  ### Instance Properties
+  
+  <ParamField path="views" type="TypedViews<TStack['views']>">
+    Typed view accessors for all entities
+  </ParamField>
+  
+  <ParamField path="connectionState" type="ConnectionState">
+    Current connection state
+  </ParamField>
+  
+  <ParamField path="store" type="EntityStore">
+    Underlying entity store
+  </ParamField>
+  
+  ### Instance Methods
+  
+  <ParamField path="disconnect" type="() => void">
+    Disconnect from the server
+  </ParamField>
+  
+  <ParamField path="onConnectionStateChange" type="(callback: ConnectionStateCallback) => UnsubscribeFn">
+    Subscribe to connection state changes
+  </ParamField>
+  
+  <ParamField path="getSubscriptionRegistry" type="() => SubscriptionRegistry">
+    Get the subscription registry
+  </ParamField>
+</ResponseField>
+
+<ResponseField name="HyperStackOptions" type="interface">
+  Configuration options for HyperStack client
+  
+  ```typescript
+  interface HyperStackOptions<TStack extends StackDefinition> {
+    stack: TStack;
+    url?: string;
+    storage?: StorageAdapter;
+    autoReconnect?: boolean;
+    reconnectIntervals?: number[];
+    maxReconnectAttempts?: number;
+    validateFrames?: boolean;
+    maxEntriesPerView?: number | null;
+    flushIntervalMs?: number;
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="HyperStackOptionsWithStorage" type="interface">
+  Extended options including storage adapter configuration
+</ResponseField>
+
+### Connection Management
+
+<ResponseField name="ConnectionManager" type="class">
+  Manages WebSocket connections with automatic reconnection
+  
+  ### Methods
+  
+  <ParamField path="connect" type="async () => void">
+    Establish WebSocket connection
+  </ParamField>
+  
+  <ParamField path="disconnect" type="() => void">
+    Close connection
+  </ParamField>
+  
+  <ParamField path="send" type="(message: any) => void">
+    Send message to server
+  </ParamField>
+  
+  <ParamField path="onMessage" type="(handler: (data: any) => void) => void">
+    Register message handler
+  </ParamField>
+  
+  <ParamField path="onStateChange" type="(handler: (state: ConnectionState) => void) => UnsubscribeFn">
+    Subscribe to connection state changes
+  </ParamField>
+</ResponseField>
+
+<ResponseField name="ConnectionState" type="type">
+  Connection state enumeration
+  
+  ```typescript
+  type ConnectionState =
+    | 'disconnected'
+    | 'connecting'
+    | 'connected'
+    | 'reconnecting'
+    | 'error';
+  ```
+</ResponseField>
+
+### Subscription Management
+
+<ResponseField name="SubscriptionRegistry" type="class">
+  Manages view subscriptions
+  
+  ### Methods
+  
+  <ParamField path="subscribe" type="(subscription: Subscription) => UnsubscribeFn">
+    Subscribe to a view
+  </ParamField>
+  
+  <ParamField path="unsubscribe" type="(subscription: Subscription) => void">
+    Unsubscribe from a view
+  </ParamField>
+  
+  <ParamField path="getActiveSubscriptions" type="() => Subscription[]">
+    Get all active subscriptions
+  </ParamField>
+</ResponseField>
+
+<ResponseField name="Subscription" type="interface">
+  Subscription configuration
+  
+  ```typescript
+  interface Subscription {
+    view: string;
+    key?: string;
+    partition?: string;
+    filters?: Record<string, string>;
+    take?: number;
+    skip?: number;
+  }
+  ```
+</ResponseField>
+
+### Frame Processing
+
+<ResponseField name="FrameProcessor" type="class">
+  Processes incoming WebSocket frames and updates the store
+  
+  ### Constructor
+  
+  ```typescript
+  new FrameProcessor(config: FrameProcessorConfig)
+  ```
+</ResponseField>
+
+<ResponseField name="FrameProcessorConfig" type="interface">
+  Configuration for frame processor
+  
+  ```typescript
+  interface FrameProcessorConfig {
+    storage: StorageAdapter;
+    validateFrames?: boolean;
+    onError?: (error: Error) => void;
+  }
+  ```
+</ResponseField>
+
+### Entity Store
+
+<ResponseField name="EntityStore" type="class">
+  In-memory entity store with change tracking
+  
+  ### Methods
+  
+  <ParamField path="get" type="<T>(view: string, key: string) => Promise<T | null>">
+    Get entity by key
+  </ParamField>
+  
+  <ParamField path="getSync" type="<T>(view: string, key: string) => T | null | undefined">
+    Synchronously get entity (may return undefined if not loaded)
+  </ParamField>
+  
+  <ParamField path="getAll" type="<T>(view: string) => Promise<T[]>">
+    Get all entities in a view
+  </ParamField>
+  
+  <ParamField path="getAllSync" type="<T>(view: string) => T[] | undefined">
+    Synchronously get all entities
+  </ParamField>
+  
+  <ParamField path="onUpdate" type="(callback: () => void) => UnsubscribeFn">
+    Subscribe to store updates
+  </ParamField>
+</ResponseField>
+
+<ResponseField name="EntityStoreConfig" type="interface">
+  Configuration for entity store
+</ResponseField>
+
+<ResponseField name="ViewConfig" type="interface">
+  Configuration for individual views
+</ResponseField>
+
+## Storage Adapters
+
+<ResponseField name="StorageAdapter" type="interface">
+  Interface for storage backends
+  
+  ```typescript
+  interface StorageAdapter {
+    get<T>(view: string, key: string): Promise<T | null>;
+    getSync<T>(view: string, key: string): T | null | undefined;
+    getAll<T>(view: string): Promise<T[]>;
+    getAllSync<T>(view: string): T[] | undefined;
+    set(view: string, key: string, value: unknown): void;
+    delete(view: string, key: string): void;
+    clear(view: string): void;
+    onUpdate(callback: UpdateCallback): UnsubscribeFn;
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="MemoryAdapter" type="class">
+  In-memory storage adapter (default)
+  
+  ```typescript
+  const adapter = new MemoryAdapter();
+  ```
+</ResponseField>
+
+<ResponseField name="StorageAdapterConfig" type="interface">
+  Configuration for storage adapters
+</ResponseField>
+
+<ResponseField name="ViewSortConfig" type="interface">
+  Sort configuration for views
+</ResponseField>
+
+<ResponseField name="UpdateCallback" type="type">
+  Callback for entity updates
+  
+  ```typescript
+  type UpdateCallback = (view: string, key: string, value: unknown) => void;
+  ```
+</ResponseField>
+
+<ResponseField name="RichUpdateCallback" type="type">
+  Callback for rich updates with before/after states
+</ResponseField>
+
+## Frame Types
+
+<ResponseField name="Frame" type="type">
+  Union of all frame types
+  
+  ```typescript
+  type Frame = EntityFrame | SnapshotFrame | SubscribedFrame;
+  ```
+</ResponseField>
+
+<ResponseField name="EntityFrame" type="interface">
+  Entity update frame
+  
+  ```typescript
+  interface EntityFrame {
+    view: string;
+    mode: FrameMode;
+    op: FrameOp;
+    key: string;
+    data: unknown;
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="SnapshotFrame" type="interface">
+  Snapshot frame with initial state
+  
+  ```typescript
+  interface SnapshotFrame {
+    view: string;
+    snapshot: SnapshotEntity[];
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="SnapshotEntity" type="interface">
+  Entity within a snapshot
+</ResponseField>
+
+<ResponseField name="SubscribedFrame" type="interface">
+  Subscription confirmation frame
+</ResponseField>
+
+<ResponseField name="FrameMode" type="type">
+  View mode
+  
+  ```typescript
+  type FrameMode = 'state' | 'list' | 'append';
+  ```
+</ResponseField>
+
+<ResponseField name="FrameOp" type="type">
+  Frame operation
+  
+  ```typescript
+  type FrameOp = 'upsert' | 'patch' | 'delete';
+  ```
+</ResponseField>
+
+<ResponseField name="SortConfig" type="interface">
+  Sort configuration
+</ResponseField>
+
+<ResponseField name="SortOrder" type="type">
+  Sort order: `'asc' | 'desc'`
+</ResponseField>
+
+### Frame Utilities
+
+<ResponseField name="parseFrame" type="function">
+  Parse WebSocket message to Frame
+  
+  ```typescript
+  function parseFrame(data: string): Frame | null
+  ```
+</ResponseField>
+
+<ResponseField name="parseFrameFromBlob" type="async function">
+  Parse Blob to Frame
+  
+  ```typescript
+  async function parseFrameFromBlob(blob: Blob): Promise<Frame | null>
+  ```
+</ResponseField>
+
+<ResponseField name="isValidFrame" type="function">
+  Check if data is a valid frame
+  
+  ```typescript
+  function isValidFrame(data: unknown): data is Frame
+  ```
+</ResponseField>
+
+<ResponseField name="isSnapshotFrame" type="function">
+  Type guard for snapshot frames
+</ResponseField>
+
+<ResponseField name="isSubscribedFrame" type="function">
+  Type guard for subscribed frames
+</ResponseField>
+
+<ResponseField name="isEntityFrame" type="function">
+  Type guard for entity frames
+</ResponseField>
+
+## Error Handling
+
+<ResponseField name="HyperStackError" type="class">
+  Custom error class for HyperStack operations
+  
+  ```typescript
+  class HyperStackError extends Error {
+    constructor(
+      message: string,
+      public code: string,
+      public details?: unknown
+    )
+  }
+  ```
+</ResponseField>
+
+## Constants
+
+<ResponseField name="DEFAULT_CONFIG" type="const">
+  Default client configuration
+  
+  ```typescript
+  const DEFAULT_CONFIG = {
+    reconnectIntervals: [1000, 2000, 4000, 8000, 16000],
+    maxReconnectAttempts: 5,
+    maxEntriesPerView: 10_000,
+  };
+  ```
+</ResponseField>
+
+<ResponseField name="DEFAULT_MAX_ENTRIES_PER_VIEW" type="const">
+  Default maximum entries per view: `10_000`
+</ResponseField>

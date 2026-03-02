@@ -1,0 +1,146 @@
+---
+title: Introduction to Hyperstack
+description: Real-time streaming data pipelines for Solana - transform on-chain events into typed state projections
+---
+
+# Introduction to Hyperstack
+
+Hyperstack is a real-time streaming data pipeline framework for Solana that transforms on-chain events into typed state projections. Build responsive applications that react to blockchain state changes in milliseconds, not seconds.
+
+## What is Hyperstack?
+
+Hyperstack provides a complete solution for streaming Solana program data:
+
+- **Real-time streaming**: WebSocket-based updates as on-chain state changes
+- **Type-safe projections**: Transform raw blockchain data into structured entities
+- **Multi-language SDKs**: First-class support for Rust, TypeScript, React, and Python
+- **Production-ready**: Auto-reconnection, state management, and error handling built-in
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get up and running with a working example in minutes
+  </Card>
+  <Card title="Installation" icon="download" href="/installation">
+    Install Hyperstack packages for your preferred language
+  </Card>
+  <Card title="Core Concepts" icon="book" href="/concepts/overview">
+    Understand stacks, views, and streaming patterns
+  </Card>
+  <Card title="CLI Reference" icon="terminal" href="/cli/commands">
+    Deploy and manage stacks with the Hyperstack CLI
+  </Card>
+</CardGroup>
+
+## How it works
+
+Hyperstack transforms on-chain Solana events into structured, queryable state projections:
+
+<Steps>
+  <Step title="Define your stack">
+    Create stream definitions that specify how to transform on-chain data into typed entities.
+  </Step>
+  
+  <Step title="Deploy to production">
+    Use the Hyperstack CLI to deploy your stack and get a WebSocket endpoint.
+    
+    ```bash
+    hs up
+    ```
+  </Step>
+  
+  <Step title="Connect and stream">
+    Subscribe to real-time updates using one of the client SDKs.
+    
+    <CodeGroup>
+    ```typescript TypeScript
+    import { HyperStack } from 'hyperstack-typescript';
+    
+    const hs = await HyperStack.connect('wss://mainnet.hyperstack.xyz', {
+      stack: MY_STACK,
+    });
+    
+    for await (const update of hs.views.myEntity.list.watch()) {
+      console.log('Entity updated:', update.data);
+    }
+    ```
+    
+    ```tsx React
+    import { useHyperstack } from 'hyperstack-react';
+    
+    function MyComponent() {
+      const { views } = useHyperstack(MY_STACK);
+      const { data } = views.myEntity.list.useOne();
+      
+      return <div>{data?.name}</div>;
+    }
+    ```
+    
+    ```rust Rust
+    use hyperstack_sdk::prelude::*;
+    
+    let hs = HyperStack::connect("wss://mainnet.hyperstack.xyz").await?;
+    
+    let mut stream = hs.watch::<MyEntity>();
+    while let Some(update) = stream.next().await {
+        println!("Updated: {:?}", update.data());
+    }
+    ```
+    </CodeGroup>
+  </Step>
+</Steps>
+
+## Key features
+
+### Type-safe streaming
+
+All SDKs provide fully typed entities and views. Your IDE provides autocomplete, and the compiler catches errors before runtime.
+
+### Framework agnostic
+
+The TypeScript SDK works with any framework (Vue, Svelte, Node.js), while the React SDK provides hooks for React applications.
+
+### Production ready
+
+- **Auto-reconnection**: Handles connection drops with configurable backoff
+- **State management**: Client-side caching and synchronization
+- **Rich updates**: Track before/after diffs for entity changes
+- **Multiple view types**: State views (single entity), list views (collections), and derived views
+
+## Architecture
+
+Hyperstack consists of several components:
+
+| Component | Purpose |
+|-----------|----------|
+| **hyperstack** | Rust umbrella crate re-exporting all components |
+| **hyperstack-interpreter** | AST transformation runtime and VM |
+| **hyperstack-macros** | Proc-macros for stream definitions |
+| **hyperstack-server** | WebSocket server and projection handlers |
+| **hyperstack-cli** | CLI tool for deployment and SDK generation |
+| **hyperstack-sdk** | Rust client SDK |
+| **hyperstack-typescript** | Pure TypeScript SDK (framework-agnostic) |
+| **hyperstack-react** | React SDK with hooks |
+| **hyperstack-sdk (Python)** | Python client SDK *(work in progress)* |
+
+<Note>
+  The Python SDK is currently under active development and has not yet been published to PyPI.
+</Note>
+
+## Use cases
+
+- **DeFi dashboards**: Real-time token prices, liquidity pools, and trading activity
+- **Gaming**: Live leaderboards, player stats, and game state
+- **NFT platforms**: Instant updates on mints, transfers, and marketplace activity
+- **Analytics**: Real-time metrics and aggregations from on-chain data
+- **Monitoring**: Track program state changes and trigger alerts
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Build your first Hyperstack application
+  </Card>
+  <Card title="Installation" icon="download" href="/installation">
+    Install packages for Rust, TypeScript, or React
+  </Card>
+</CardGroup>

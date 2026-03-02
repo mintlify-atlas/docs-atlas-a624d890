@@ -1,0 +1,158 @@
+---
+title: "HyperStack Client"
+description: "Connect to HyperStack servers and manage connections with the Rust SDK"
+---
+
+The `HyperStack` client is the main entry point for connecting to HyperStack streaming servers in Rust.
+
+## Basic Connection
+
+Connect to a stack's default URL:
+
+```rust
+use hyperstack_sdk::prelude::*;
+use hyperstack_stacks::ore::OreStack;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let hs = HyperStack::<OreStack>::connect().await?;
+    
+    // Access views through the client
+    let rounds = hs.views.latest().get().await;
+    
+    Ok(())
+}
+```
+
+## Custom URL Connection
+
+Connect to a specific server URL:
+
+```rust
+let hs = HyperStack::<OreStack>::connect_url("wss://custom.server.com").await?;
+```
+
+## HyperStackBuilder
+
+Use the builder pattern for advanced configuration:
+
+```rust
+use std::time::Duration;
+
+let hs = HyperStack::<OreStack>::builder()
+    .url("wss://custom.server.com")
+    .auto_reconnect(true)
+    .max_reconnect_attempts(5)
+    .ping_interval(Duration::from_secs(30))
+    .initial_data_timeout(Duration::from_secs(10))
+    .max_entries_per_view(1000)
+    .connect()
+    .await?;
+```
+
+### Builder Methods
+
+<ParamField path="url" type="&str">
+  Set custom WebSocket server URL
+</ParamField>
+
+<ParamField path="auto_reconnect" type="bool">
+  Enable/disable automatic reconnection (default: true)
+</ParamField>
+
+<ParamField path="reconnect_intervals" type="Vec<Duration>">
+  Set custom reconnection intervals for exponential backoff
+</ParamField>
+
+<ParamField path="max_reconnect_attempts" type="u32">
+  Maximum number of reconnection attempts
+</ParamField>
+
+<ParamField path="ping_interval" type="Duration">
+  Interval for sending WebSocket ping frames
+</ParamField>
+
+<ParamField path="initial_data_timeout" type="Duration">
+  Timeout for waiting for initial data after subscription
+</ParamField>
+
+<ParamField path="max_entries_per_view" type="usize">
+  Limit the maximum number of entries cached per view
+</ParamField>
+
+<ParamField path="unlimited_entries" type="()">
+  Remove the limit on cached entries (use with caution)
+</ParamField>
+
+## Client Methods
+
+### connection_state
+
+Get the current connection state:
+
+```rust
+let state = hs.connection_state().await;
+println!("Connection state: {:?}", state);
+```
+
+### disconnect
+
+Manually disconnect from the server:
+
+```rust
+hs.disconnect().await;
+```
+
+### store
+
+Access the underlying shared store:
+
+```rust
+let store = hs.store();
+// Advanced usage: direct store access
+```
+
+## Type System
+
+The `HyperStack` client uses Rust's type system to provide compile-time safety:
+
+```rust
+// The Stack trait defines the views available
+pub struct HyperStack<S: Stack> {
+    pub views: S::Views,
+    // ...
+}
+```
+
+Each stack implementation (like `OreStack`) defines its own `Views` type that provides access to stack-specific views.
+
+## Error Handling
+
+Connection methods return `Result<HyperStack<S>, HyperStackError>`:
+
+```rust
+match HyperStack::<OreStack>::connect().await {
+    Ok(hs) => {
+        println!("Connected successfully");
+    }
+    Err(e) => {
+        eprintln!("Connection failed: {}", e);
+    }
+}
+```
+
+## Connection Lifecycle
+
+1. **Connect** - Establish WebSocket connection
+2. **Subscribe** - Automatically subscribe to views when accessed
+3. **Stream** - Receive real-time updates
+4. **Reconnect** - Automatically reconnect on connection loss (if enabled)
+5. **Disconnect** - Clean shutdown when client is dropped or manually disconnected
+
+## Best Practices
+
+- Use `connect()` for simple cases with default configuration
+- Use the builder pattern for production deployments requiring custom configuration
+- Enable auto-reconnect for resilient applications
+- Set appropriate timeouts based on your network conditions
+- Use `max_entries_per_view` to limit memory usage in long-running applications

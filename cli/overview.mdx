@@ -1,0 +1,141 @@
+---
+title: CLI Overview
+description: Introduction to the Hyperstack CLI for building, deploying, and managing stream stacks
+---
+
+# CLI Overview
+
+The Hyperstack CLI (`hs`) is a command-line tool for building, deploying, and managing HyperStack stream stacks. It provides a complete workflow from project creation to production deployment.
+
+## Installation
+
+See the [Installation](/cli/installation) guide for platform-specific instructions.
+
+## Core Workflow
+
+The typical development workflow with the Hyperstack CLI:
+
+1. **Create** a new project from a template
+   ```bash
+   hs create my-stack --template react-ore
+   ```
+
+2. **Initialize** configuration if starting from an existing project
+   ```bash
+   hs init
+   ```
+
+3. **Deploy** your stack to production
+   ```bash
+   hs up
+   ```
+
+4. **Generate SDKs** for client applications
+   ```bash
+   hs sdk create typescript my-stack
+   ```
+
+## Command Categories
+
+### Project Management
+- [`hs create`](/cli/commands/create) - Create a new project from a template
+- [`hs init`](/cli/commands/init) - Initialize configuration for an existing project
+
+### Deployment
+- [`hs up`](/cli/commands/up) - Deploy a stack (push + build + deploy)
+- `hs push` - Push local stacks to remote (alias for `hs stack push`)
+- `hs status` - Show overview of stacks, builds, and deployments
+
+### Stack Management
+- [`hs stack`](/cli/commands/stack) - Manage deployed stacks (list, show, delete, rollback, stop)
+- [`hs explore`](/cli/commands/explore) - Discover stacks and explore their schemas
+
+### SDK Generation
+- [`hs sdk`](/cli/commands/sdk) - Generate TypeScript and Rust SDKs
+
+### Build Management (Advanced)
+- [`hs build`](/cli/commands/build) - Low-level build management (hidden from help)
+
+### Configuration & Authentication
+- `hs auth` - Login, logout, check authentication status
+- `hs config` - Validate configuration files
+
+## Global Flags
+
+All commands support these global flags:
+
+<ParamField path="--config" type="string" default="hyperstack.toml">
+  Path to the hyperstack.toml configuration file
+</ParamField>
+
+<ParamField path="--json" type="boolean">
+  Output in JSON format for machine-readable output
+</ParamField>
+
+<ParamField path="--verbose" type="boolean">
+  Enable verbose output for debugging
+</ParamField>
+
+<ParamField path="--completions" type="string">
+  Generate shell completions for bash, zsh, fish, powershell, or elvish
+  
+  ```bash
+  # Install bash completions
+  hs --completions bash > /usr/local/etc/bash_completion.d/hs
+  
+  # Install zsh completions
+  hs --completions zsh > /usr/local/share/zsh/site-functions/_hs
+  ```
+</ParamField>
+
+## Configuration File
+
+The CLI uses `hyperstack.toml` to define stacks, deployment settings, and SDK configuration:
+
+```toml hyperstack.toml
+[[stack]]
+name = "my-stack"
+ast_file = "stacks/my-stack.stack"
+
+[sdk.typescript]
+output = "./sdk/typescript"
+package_name = "@my-org/my-stack-sdk"
+
+[sdk.rust]
+output = "./sdk/rust"
+crate_name = "my_stack_sdk"
+```
+
+## Return Codes
+
+The CLI uses standard Unix return codes:
+
+- `0` - Success
+- `1` - Error (with error message printed to stderr)
+
+## Telemetry
+
+The CLI collects anonymous usage telemetry to help improve the product. You can:
+
+- View telemetry status: `hs telemetry status`
+- Opt out: `hs telemetry disable`
+- Opt in: `hs telemetry enable`
+
+No personally identifiable information is collected.
+
+## Getting Help
+
+```bash
+# Show general help
+hs --help
+
+# Show command-specific help
+hs up --help
+hs stack --help
+```
+
+## Next Steps
+
+- [Install the CLI](/cli/installation)
+- [Set up authentication](/cli/authentication)
+- [Deploy your first stack](/cli/commands/up)

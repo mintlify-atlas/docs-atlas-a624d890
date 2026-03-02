@@ -1,0 +1,638 @@
+---
+title: Virtual Machine
+description: Deep dive into the HyperStack virtual machine and bytecode execution
+---
+
+The HyperStack VM executes bytecode to transform blockchain events into entity mutations. It maintains state tables, lookup indexes, and handles staleness detection.
+
+## VM Architecture
+
+**Location**: `interpreter/src/vm.rs`
+
+### VmContext
+
+The `VmContext` is the main VM state container.
+
+```rust
+pub struct VmContext {
+    registers: Vec<RegisterValue>,              // 256 registers
+    states: HashMap<u32, StateTable>,           // Entity state tables
+    instructions_executed: u64,                 // Opcode counter
+    cache_hits: u64,                            // Path cache hits
+    path_cache: HashMap<String, CompiledPath>,  // Path compilation cache
+    pda_cache_hits: u64,                        // PDA lookup cache hits
+    pda_cache_misses: u64,                      // PDA lookup cache misses
+    pending_queue_size: u64,                    // Queued account updates
+    resolver_requests: VecDeque<ResolverRequest>, // Pending resolver requests
+    resolver_pending: HashMap<String, PendingResolverEntry>, // In-flight resolvers
+    resolver_cache: LruCache<String, Value>,    // Resolver result cache
+    resolver_cache_hits: u64,
+    resolver_cache_misses: u64,
+    current_context: Option<UpdateContext>,     // Current event context
+    warnings: Vec<String>,                      // Warning messages
+}
+```
+
+### Registers
+
+256 general-purpose registers for intermediate values:
+
+```rust
+pub type Register = usize;
+pub type RegisterValue = serde_json::Value;
+
+// Special register allocations
+const STATE_REG: usize = 2;      // Entity state object
+const KEY_REG: usize = 20;       // Primary key
+const TEMP_REG: usize = 10;      // Temporary value
+const LOOKUP_REG: usize = 15;    // Lookup value
+const RESULT_REG: usize = 17;    // Lookup result
+```
+
+### State Tables
+
+Each entity type has its own state table:
+
+```rust
+pub struct StateTable {
+    pub data: DashMap<Value, Value>,                    // Entity storage
+    access_times: DashMap<Value, i64>,                  // LRU tracking
+    pub lookup_indexes: HashMap<String, LookupIndex>,   // Secondary indexes
+    pub temporal_indexes: HashMap<String, TemporalIndex>, // Time-series indexes
+    pub pda_reverse_lookups: HashMap<String, PdaReverseLookup>, // PDA mappings
+    pub pending_updates: DashMap<String, Vec<PendingAccountUpdate>>, // Queued updates
+    pub pending_instruction_events: DashMap<String, Vec<PendingInstructionEvent>>,
+    version_tracker: VersionTracker,                    // Staleness detection
+    instruction_dedup_cache: VersionTracker,            // Duplicate detection
+    config: StateTableConfig,                           // Capacity limits
+    entity_name: String,
+    pub recent_tx_instructions: Mutex<LruCache<String, HashSet<String>>>,
+    pub deferred_when_ops: DashMap<(String, String), Vec<DeferredWhenOperation>>,
+}
+```
+
+### Configuration
+
+```rust
+pub struct StateTableConfig {
+    pub max_entries: usize,      // Default: 2,500
+    pub max_array_length: usize, // Default: 100
+}
+```
+
+## Event Processing
+
+The VM processes blockchain events through the `process_event` method.
+
+**Location**: `vm.rs:1399-1700`
+
+```rust
+pub fn process_event(
+    &mut self,
+    bytecode: &MultiEntityBytecode,
+    event_value: Value,
+    event_type: &str,
+    context: Option<&UpdateContext>,
+    log: Option<&mut CanonicalLog>,
+) -> Result<Vec<Mutation>>
+```
+
+### Processing Flow
+
+1. **Set context** - Store UpdateContext for metadata injection
+2. **Route event** - Find entity handlers for event type
+3. **Execute handlers** - Run bytecode for each handler
+4. **Return mutations** - Collect all generated mutations
+
+```rust
+let mut all_mutations = Vec::new();
+
+if let Some(entity_names) = bytecode.event_routing.get(event_type) {
+    for entity_name in entity_names {
+        if let Some(entity_bytecode) = bytecode.entities.get(entity_name) {
+            if let Some(handler) = entity_bytecode.handlers.get(event_type) {
+                let mutations = self.execute_handler(
+                    handler,
+                    &event_value,
+                    event_type,
+                    entity_bytecode.state_id,
+                    entity_name,
+                    entity_bytecode.computed_fields_evaluator.as_ref(),
+                    Some(&entity_bytecode.non_emitted_fields),
+                )?;
+                all_mutations.extend(mutations);
+            }
+        }
+    }
+}
+```
+
+### UpdateContext
+
+Metadata about the blockchain update:
+
+```rust
+pub struct UpdateContext {
+    pub slot: Option<u64>,                  // Blockchain slot
+    pub signature: Option<String>,          // Transaction signature
+    pub timestamp: Option<i64>,             // Unix timestamp
+    pub write_version: Option<u64>,         // Account write version
+    pub txn_index: Option<u64>,             // Transaction index
+    pub metadata: HashMap<String, Value>,   // Custom metadata
+}
+```
+
+**Methods**:
+
+```rust
+// Create context for account updates
+let ctx = UpdateContext::new_account(slot, signature, write_version);
+
+// Create context for instruction updates
+let ctx = UpdateContext::new_instruction(slot, signature, txn_index);
+
+// Convert to JSON for injection
+let json = ctx.to_value();
+// {"slot": 12345, "signature": "...", "timestamp": 1234567890}
+```
+
+## OpCode Execution
+
+The VM executes opcodes sequentially.
+
+**Location**: `vm.rs:1700-2500`
+
+### LoadEventField
+
+Extract a field from the event JSON:
+
+```rust
+OpCode::LoadEventField { path, dest, default } => {
+    let value = Self::get_value_at_path(&event_value, &path.segments)
+        .or(default.clone())
+        .unwrap_or(Value::Null);
+    vm.registers[dest] = value;
+}
+```
+
+### ReadOrInitState
+
+Load entity from state table (with staleness check):
+
+```rust
+OpCode::ReadOrInitState { state_id, key, default, dest } => {
+    let state_table = vm.states.get(&state_id).ok_or("State not found")?;
+    let key_value = &vm.registers[key];
+    
+    // Staleness check
+    if let Some(ctx) = &vm.current_context {
+        if let (Some(slot), Some(version)) = (ctx.slot, ctx.write_version) {
+            if !state_table.is_fresh_update(key_value, event_type, slot, version) {
+                return Ok(vec![]); // Skip stale update
+            }
+        }
+    }
+    
+    // Load or initialize
+    let entity = state_table.get_and_touch(key_value)
+        .unwrap_or_else(|| default.clone());
+    
+    vm.registers[dest] = entity;
+}
+```
+
+### SetField
+
+Set a field in an object:
+
+```rust
+OpCode::SetField { object, path, value } => {
+    let obj = &mut vm.registers[object];
+    let val = vm.registers[value].clone();
+    
+    Self::set_nested_field_value(obj, &path, val)?;
+    dirty_tracker.mark_replaced(&path);
+}
+```
+
+### UpdateState
+
+Save entity to state table:
+
+```rust
+OpCode::UpdateState { state_id, key, value } => {
+    let state_table = vm.states.get(&state_id).ok_or("State not found")?;
+    let key_value = vm.registers[key].clone();
+    let entity_value = vm.registers[value].clone();
+    
+    state_table.insert_with_eviction(key_value, entity_value);
+}
+```
+
+### EmitMutation
+
+Generate a mutation for the projector:
+
+```rust
+OpCode::EmitMutation { entity_name, key, state } => {
+    let key_value = vm.registers[key].clone();
+    let patch = Self::extract_partial_state_with_tracker(
+        state, 
+        &dirty_tracker
+    )?;
+    
+    if !dirty_tracker.is_empty() {
+        mutations.push(Mutation {
+            export: entity_name.clone(),
+            key: key_value,
+            patch,
+            append: dirty_tracker.appended_paths(),
+        });
+    }
+}
+```
+
+## Staleness Detection
+
+The VM prevents out-of-order updates using version tracking.
+
+**Location**: `vm.rs:825-881`
+
+### Account Updates
+
+Uses lexicographic comparison on `(slot, write_version)`:
+
+```rust
+pub fn is_fresh_update(
+    &self,
+    primary_key: &Value,
+    event_type: &str,
+    slot: u64,
+    ordering_value: u64,
+) -> bool {
+    let dominated = self
+        .version_tracker
+        .get(primary_key, event_type)
+        .map(|(last_slot, last_version)| {
+            (slot, ordering_value) <= (last_slot, last_version)
+        })
+        .unwrap_or(false);
+    
+    if dominated {
+        return false; // Stale update, skip it
+    }
+    
+    self.version_tracker
+        .insert(primary_key, event_type, slot, ordering_value);
+    true
+}
+```
+
+**Example**:
+```
+(100, 5) > (100, 3) > (99, 999) > (99, 1)
+
+Slot 99, version 1:   Accepted (first update)
+Slot 99, version 999: Accepted (higher version)
+Slot 100, version 3:  Accepted (higher slot)
+Slot 100, version 5:  Accepted (higher version in same slot)
+Slot 99, version 999: REJECTED (stale - lower slot)
+Slot 100, version 3:  REJECTED (stale - lower version in same slot)
+```
+
+### Instruction Deduplication
+
+Instructions use exact `(slot, txn_index)` matching:
+
+```rust
+pub fn is_duplicate_instruction(
+    &self,
+    primary_key: &Value,
+    event_type: &str,
+    slot: u64,
+    txn_index: u64,
+) -> bool {
+    let is_duplicate = self
+        .instruction_dedup_cache
+        .get(primary_key, event_type)
+        .map(|(last_slot, last_txn_index)| {
+            slot == last_slot && txn_index == last_txn_index
+        })
+        .unwrap_or(false);
+    
+    if !is_duplicate {
+        self.instruction_dedup_cache
+            .insert(primary_key, event_type, slot, txn_index);
+    }
+    
+    is_duplicate
+}
+```
+
+**Why Different?**
+- Account updates are state-based (only latest matters)
+- Instructions are event-based (all unique events matter)
+- Duplicates can occur due to gRPC retries
+
+## LRU Eviction
+
+When state tables reach capacity, the VM evicts least-recently-used entities.
+
+**Location**: `vm.rs:775-803`
+
+```rust
+fn evict_lru(&self, count: usize) -> usize {
+    if count == 0 || self.data.is_empty() {
+        return 0;
+    }
+    
+    // Collect all entries with access times
+    let mut entries: Vec<(Value, i64)> = self
+        .access_times
+        .iter()
+        .map(|entry| (entry.key().clone(), *entry.value()))
+        .collect();
+    
+    // Sort by access time (oldest first)
+    entries.sort_by_key(|(_, ts)| *ts);
+    
+    // Evict oldest entries
+    let to_evict: Vec<Value> = entries
+        .iter()
+        .take(count)
+        .map(|(k, _)| k.clone())
+        .collect();
+    
+    let mut evicted = 0;
+    for key in to_evict {
+        self.data.remove(&key);
+        self.access_times.remove(&key);
+        evicted += 1;
+    }
+    
+    evicted
+}
+```
+
+### Eviction Triggers
+
+```rust
+pub fn insert_with_eviction(&self, key: Value, value: Value) {
+    // Check capacity before insert
+    if self.data.len() >= self.config.max_entries && !self.data.contains_key(&key) {
+        // Record metric
+        #[cfg(feature = "otel")]
+        record_state_table_at_capacity(&self.entity_name);
+        
+        // Evict enough entries to make room
+        let to_evict = (self.data.len() + 1)
+            .saturating_sub(self.config.max_entries)
+            .max(1);
+        
+        self.evict_lru(to_evict);
+    }
+    
+    self.data.insert(key.clone(), value);
+    self.touch(&key);
+}
+```
+
+## Lookup Indexes
+
+Lookup indexes enable secondary key access.
+
+**Location**: `vm.rs:327-377`
+
+### LookupIndex
+
+```rust
+pub struct LookupIndex {
+    index: Mutex<LruCache<String, Value>>,
+}
+
+impl LookupIndex {
+    pub fn lookup(&self, lookup_value: &Value) -> Option<Value> {
+        let key = value_to_cache_key(lookup_value);
+        self.index.lock().unwrap().get(&key).cloned()
+    }
+    
+    pub fn insert(&self, lookup_value: Value, primary_key: Value) {
+        let key = value_to_cache_key(&lookup_value);
+        self.index.lock().unwrap().put(key, primary_key);
+    }
+}
+```
+
+### Usage
+
+```rust
+// Register lookup
+OpCode::UpdateLookupIndex {
+    state_id: 0,
+    index_name: "pda_to_mint",
+    lookup_value: pda_reg,      // PDA address
+    primary_key: mint_reg,      // Mint address
+}
+
+// Query lookup
+OpCode::LookupIndex {
+    state_id: 0,
+    index_name: "pda_to_mint",
+    lookup_value: pda_reg,      // PDA address
+    dest: result_reg,           // Mint address (or null)
+}
+```
+
+## Temporal Indexes
+
+Temporal indexes support time-series lookups.
+
+**Location**: `vm.rs:395-488`
+
+### TemporalIndex
+
+```rust
+pub struct TemporalIndex {
+    // Maps lookup_value → [(primary_key, timestamp), ...]
+    index: Mutex<LruCache<String, Vec<(Value, i64)>>>,
+}
+
+impl TemporalIndex {
+    pub fn lookup(&self, lookup_value: &Value, timestamp: i64) -> Option<Value> {
+        let key = value_to_cache_key(lookup_value);
+        let mut cache = self.index.lock().unwrap();
+        
+        if let Some(entries) = cache.get(&key) {
+            // Find latest entry before timestamp
+            for i in (0..entries.len()).rev() {
+                if entries[i].1 <= timestamp {
+                    return Some(entries[i].0.clone());
+                }
+            }
+        }
+        None
+    }
+    
+    pub fn insert(&self, lookup_value: Value, primary_key: Value, timestamp: i64) {
+        let key = value_to_cache_key(&lookup_value);
+        let mut cache = self.index.lock().unwrap();
+        
+        let entries = cache.get_or_insert_mut(key, Vec::new);
+        entries.push((primary_key, timestamp));
+        entries.sort_by_key(|(_, ts)| *ts);
+        
+        // Cleanup old entries
+        let cutoff = timestamp - TEMPORAL_HISTORY_TTL_SECONDS;
+        entries.retain(|(_, ts)| *ts >= cutoff);
+        
+        // Limit history size
+        if entries.len() > MAX_TEMPORAL_ENTRIES_PER_KEY {
+            let excess = entries.len() - MAX_TEMPORAL_ENTRIES_PER_KEY;
+            entries.drain(0..excess);
+        }
+    }
+}
+```
+
+### Use Case
+
+Track round IDs over time for a game:
+
+```rust
+// Register round at timestamp
+OpCode::UpdateTemporalIndex {
+    state_id: 0,
+    index_name: "round_by_time",
+    lookup_value: game_id_reg,
+    primary_key: round_id_reg,
+    timestamp: timestamp_reg,
+}
+
+// Look up active round at specific time
+OpCode::LookupTemporalIndex {
+    state_id: 0,
+    index_name: "round_by_time",
+    lookup_value: game_id_reg,
+    timestamp: event_time_reg,
+    dest: round_id_reg,
+}
+```
+
+## Resolver Cache
+
+The resolver cache stores results from async enrichment.
+
+**Location**: `vm.rs:896-900`
+
+```rust
+resolver_cache: LruCache<String, Value>,  // 5,000 entries
+```
+
+### Cache Key
+
+```rust
+fn resolver_cache_key(resolver: &ResolverType, input: &Value) -> String {
+    format!(
+        "{}:{}",
+        resolver_type_key(resolver),
+        value_to_cache_key(input)
+    )
+}
+
+// Example: "token:EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+```
+
+### Apply Resolver Result
+
+```rust
+pub fn apply_resolver_result(
+    &mut self,
+    bytecode: &MultiEntityBytecode,
+    cache_key: &str,
+    resolved_value: Value,
+) -> Result<Vec<Mutation>> {
+    // Cache result
+    self.resolver_cache.put(cache_key.to_string(), resolved_value.clone());
+    
+    // Apply to pending targets
+    let entry = self.resolver_pending.remove(cache_key)?;
+    let mut mutations = Vec::new();
+    
+    for target in entry.targets {
+        // Extract fields from resolved value
+        // Update entity state
+        // Generate mutation
+        mutations.push(mutation);
+    }
+    
+    Ok(mutations)
+}
+```
+
+## Memory Statistics
+
+```rust
+pub struct VmMemoryStats {
+    pub state_table_entity_count: usize,
+    pub state_table_max_entries: usize,
+    pub state_table_at_capacity: bool,
+    pub lookup_index_count: usize,
+    pub lookup_index_total_entries: usize,
+    pub temporal_index_count: usize,
+    pub temporal_index_total_entries: usize,
+    pub pda_reverse_lookup_count: usize,
+    pub pda_reverse_lookup_total_entries: usize,
+    pub version_tracker_entries: usize,
+    pub pending_queue_stats: Option<PendingQueueStats>,
+    pub path_cache_size: usize,
+}
+```
+
+## Performance Tuning
+
+### Increase State Table Capacity
+
+```rust
+let config = StateTableConfig {
+    max_entries: 5_000,  // Default: 2,500
+    max_array_length: 200, // Default: 100
+};
+
+let vm = VmContext::new_with_config(config);
+```
+
+### Monitor Evictions
+
+```rust
+// With otel feature
+if vm.state_table.is_at_capacity() {
+    eprintln!("State table at capacity! Evictions occurring.");
+}
+```
+
+### Optimize Field Access
+
+Use path caching for frequently accessed paths:
+
+```rust
+// VM automatically caches compiled paths
+let path = vm.get_compiled_path("player.inventory.items");
+// Subsequent accesses hit cache
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Interpreter" icon="code" href="/server/interpreter">
+    Learn about the compiler
+  </Card>
+  <Card title="Projector" icon="broadcast-tower" href="/server/projector">
+    Understand the projector
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/server/architecture">
+    See the big picture
+  </Card>
+  <Card title="Monitoring" icon="chart-line" href="/server/monitoring">
+    Monitor VM performance
+  </Card>
+</CardGroup>

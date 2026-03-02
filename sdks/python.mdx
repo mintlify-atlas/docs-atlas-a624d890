@@ -1,0 +1,341 @@
+---
+title: "Python SDK"
+description: "Python client for Hyperstack streaming (work in progress)"
+---
+
+<Warning>
+  The Python SDK is under active development and has **not yet been published to PyPI**. This page documents the planned API and current development status.
+</Warning>
+
+The Python SDK will provide an async/await-based client for connecting to Hyperstack servers, ideal for backend services, data pipelines, and integration with Python data science libraries.
+
+## Development Status
+
+| Feature | Status |
+|---------|--------|
+| WebSocket Connection | In Progress |
+| Entity Subscriptions | Planned |
+| Type Generation | Planned |
+| AsyncIO Support | Planned |
+| PyPI Publishing | Not Started |
+
+## Installation (Coming Soon)
+
+Once published, you'll be able to install via pip:
+
+<CodeGroup>
+```bash pip
+pip install hyperstack-sdk
+```
+```bash poetry
+poetry add hyperstack-sdk
+```
+```bash pipenv
+pipenv install hyperstack-sdk
+```
+</CodeGroup>
+
+### Development Installation
+
+For development and testing, install from source:
+
+```bash
+# Clone the repository
+git clone https://github.com/HyperTekOrg/hyperstack.git
+cd hyperstack/python/hyperstack-sdk
+
+# Install in development mode
+pip install -e .
+```
+
+## Requirements
+
+- Python 3.9+
+- `websockets` library for WebSocket support
+
+## Planned API
+
+The following API design is planned but not yet implemented:
+
+### Basic Connection
+
+```python
+from hyperstack import HyperstackClient
+
+async def main():
+    # Initialize client
+    client = HyperstackClient(
+        url="wss://mainnet.hyperstack.xyz",
+        auto_reconnect=True
+    )
+    
+    # Connect to server
+    await client.connect()
+    
+    print(f"Connected: {client.is_connected}")
+```
+
+### Streaming Updates
+
+```python
+async def stream_updates():
+    client = HyperstackClient(url="wss://mainnet.hyperstack.xyz")
+    await client.connect()
+    
+    # Subscribe to entity updates
+    async for update in client.subscribe("games"):
+        if update.type == "upsert":
+            print(f"Game updated: {update.key} - {update.data}")
+        elif update.type == "delete":
+            print(f"Game deleted: {update.key}")
+```
+
+### Query Current State
+
+```python
+async def query_state():
+    client = HyperstackClient(url="wss://mainnet.hyperstack.xyz")
+    await client.connect()
+    
+    # Get all entities
+    games = await client.list("games")
+    print(f"Found {len(games)} games")
+    
+    # Get specific entity
+    game = await client.get("games", "game-123")
+    if game:
+        print(f"Game data: {game}")
+```
+
+### Rich Updates with Diffs
+
+```python
+async def watch_diffs():
+    client = HyperstackClient(url="wss://mainnet.hyperstack.xyz")
+    await client.connect()
+    
+    # Subscribe with before/after diffs
+    async for update in client.subscribe_rich("tokens"):
+        if update.type == "updated":
+            print(f"Before: {update.before}")
+            print(f"After: {update.after}")
+            print(f"Changed fields: {update.patch}")
+```
+
+### Connection Management
+
+```python
+async def manage_connection():
+    client = HyperstackClient(
+        url="wss://mainnet.hyperstack.xyz",
+        auto_reconnect=True,
+        max_reconnect_attempts=10,
+        ping_interval=30
+    )
+    
+    # Connection state callback
+    def on_state_change(state):
+        print(f"Connection state: {state}")
+    
+    client.on_connection_state_change(on_state_change)
+    
+    await client.connect()
+    
+    # ... do work ...
+    
+    await client.disconnect()
+```
+
+## Planned Features
+
+### Type Safety
+
+Generated Python type stubs from stack specifications:
+
+```python
+from my_stack import Game, Player
+
+async def typed_query(client: HyperstackClient):
+    # Fully typed entities
+    games: list[Game] = await client.list("games")
+    player: Player | None = await client.get("players", "player-123")
+```
+
+### Data Science Integration
+
+Seamless integration with pandas and NumPy:
+
+```python
+import pandas as pd
+
+async def to_dataframe(client: HyperstackClient):
+    # Get all tokens
+    tokens = await client.list("tokens")
+    
+    # Convert to DataFrame
+    df = pd.DataFrame(tokens)
+    
+    # Analyze
+    print(df.describe())
+    print(df.groupby("status").count())
+```
+
+### Async Iteration
+
+Pythonic async iteration over streams:
+
+```python
+async def filter_stream():
+    client = HyperstackClient(url="wss://mainnet.hyperstack.xyz")
+    await client.connect()
+    
+    async for update in client.subscribe("players"):
+        if update.data.get("score", 0) > 1000:
+            print(f"High scorer: {update.data['name']}")
+```
+
+## SDK Generation (Planned)
+
+The Hyperstack CLI will support Python SDK generation:
+
+```bash
+# Generate Python SDK
+hs sdk create python settlement-game
+
+# With custom output directory
+hs sdk create python settlement-game --output ./generated
+
+# With custom package name
+hs sdk create python settlement-game --package-name game_sdk
+```
+
+This will generate:
+
+```
+generated/settlement_game_sdk/
+├── __init__.py
+├── types.py       # Type definitions
+├── client.py      # Client class
+└── entities.py    # Entity classes
+```
+
+## Contributing
+
+The Python SDK is open for contributions! Here's how you can help:
+
+### Priority Areas
+
+1. **WebSocket Implementation** - Async WebSocket client with auto-reconnect
+2. **Entity Store** - Local state management for entities
+3. **Type Generation** - Generate Python types from stack specs
+4. **Testing** - Unit tests and integration tests
+5. **Documentation** - Examples and API documentation
+
+### Development Setup
+
+```bash
+# Clone and navigate
+git clone https://github.com/HyperTekOrg/hyperstack.git
+cd hyperstack/python/hyperstack-sdk
+
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # or `venv\Scripts\activate` on Windows
+
+# Install dependencies
+pip install -e ".[dev]"
+
+# Run tests
+pytest
+
+# Format code
+black .
+ruff check .
+```
+
+### Contributing Guidelines
+
+- Follow PEP 8 style guide
+- Use type hints for all public APIs
+- Write docstrings for classes and functions
+- Add tests for new features
+- Use conventional commits for commit messages
+
+See the [Contributing Guide](https://github.com/HyperTekOrg/hyperstack/blob/main/CONTRIBUTING.md) for more details.
+
+## Current Implementation
+
+The current implementation provides basic scaffolding:
+
+```python
+from hyperstack import HyperstackClient
+
+# Basic client initialization (WIP)
+client = HyperstackClient()
+await client.connect()
+```
+
+**Note:** Most features are not yet implemented. Check the [GitHub repository](https://github.com/HyperTekOrg/hyperstack/tree/main/python/hyperstack-sdk) for the latest status.
+
+## Alternative: Use TypeScript SDK
+
+While the Python SDK is in development, consider using the TypeScript SDK with Node.js if you need production-ready streaming capabilities:
+
+```typescript
+import { HyperStack } from 'hyperstack-typescript';
+
+const hs = await HyperStack.connect('wss://mainnet.hyperstack.xyz', {
+  stack: MY_STACK,
+});
+
+for await (const update of hs.views.myView.list.watch()) {
+  console.log('Update:', update);
+}
+```
+
+See the [TypeScript SDK documentation](/sdks/typescript) for details.
+
+## Roadmap
+
+### Phase 1 - Foundation (Current)
+- [ ] WebSocket client with async/await
+- [ ] Basic connection management
+- [ ] Auto-reconnection logic
+
+### Phase 2 - Core Features
+- [ ] Entity subscriptions
+- [ ] State queries (get/list)
+- [ ] Update streaming
+- [ ] Rich updates with diffs
+
+### Phase 3 - Type Safety
+- [ ] CLI integration for SDK generation
+- [ ] Type stub generation from specs
+- [ ] Pydantic models for entities
+
+### Phase 4 - Production Ready
+- [ ] Comprehensive testing
+- [ ] Performance optimization
+- [ ] Documentation and examples
+- [ ] PyPI publishing
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="TypeScript SDK" icon="js" href="/sdks/typescript">
+    Use the production-ready TypeScript SDK
+  </Card>
+  <Card title="Rust SDK" icon="rust" href="/sdks/rust">
+    Explore the high-performance Rust SDK
+  </Card>
+  <Card title="GitHub" icon="github" href="https://github.com/HyperTekOrg/hyperstack/tree/main/python/hyperstack-sdk">
+    Contribute to Python SDK development
+  </Card>
+  <Card title="Issues" icon="bug" href="https://github.com/HyperTekOrg/hyperstack/issues">
+    Report bugs or request features
+  </Card>
+</CardGroup>
+
+<Note>
+  **Want to contribute?** The Python SDK is a great opportunity to shape the API design and implementation. Join us on [GitHub](https://github.com/HyperTekOrg/hyperstack)!
+</Note>

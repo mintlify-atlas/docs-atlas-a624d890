@@ -1,0 +1,300 @@
+---
+title: HyperStack Client
+description: Main client class for connecting to HyperStack servers
+---
+
+The `HyperStack` class is the primary interface for connecting to HyperStack streaming servers and accessing real-time entity data.
+
+## Importing
+
+```typescript
+import { HyperStack } from 'hyperstack-typescript';
+```
+
+## Connection
+
+<ResponseField name="HyperStack.connect" type="static async method">
+  Connect to a HyperStack server with a typed stack definition
+  
+  ```typescript
+  static async connect<TStack extends StackDefinition>(
+    stack: TStack,
+    options?: Partial<HyperStackOptions<TStack>>
+  ): Promise<HyperStack<TStack>>
+  ```
+  
+  ### Parameters
+  
+  <ParamField path="stack" type="TStack" required>
+    Stack definition containing entity schema, URL, and views
+  </ParamField>
+  
+  <ParamField path="options" type="HyperStackOptions<TStack>">
+    Client configuration options
+  </ParamField>
+  
+  ### Example
+  
+  ```typescript
+  import { HyperStack } from 'hyperstack-typescript';
+  import { MyStack } from './generated/stack';
+  
+  const client = await HyperStack.connect(MyStack, {
+    url: 'ws://localhost:8877',
+    autoReconnect: true,
+    reconnectIntervals: [1000, 2000, 5000],
+    maxReconnectAttempts: 5,
+  });
+  ```
+</ResponseField>
+
+## Configuration Options
+
+<ResponseField name="HyperStackOptions" type="interface">
+  Configuration for HyperStack client
+  
+  ```typescript
+  interface HyperStackOptions<TStack extends StackDefinition> {
+    stack: TStack;
+    url?: string;
+    storage?: StorageAdapter;
+    autoReconnect?: boolean;
+    reconnectIntervals?: number[];
+    maxReconnectAttempts?: number;
+    validateFrames?: boolean;
+    maxEntriesPerView?: number | null;
+    flushIntervalMs?: number;
+  }
+  ```
+  
+  <ParamField path="url" type="string">
+    WebSocket URL (overrides stack.url)
+  </ParamField>
+  
+  <ParamField path="storage" type="StorageAdapter">
+    Custom storage adapter (defaults to MemoryAdapter)
+  </ParamField>
+  
+  <ParamField path="autoReconnect" type="boolean" default="true">
+    Enable automatic reconnection on disconnect
+  </ParamField>
+  
+  <ParamField path="reconnectIntervals" type="number[]" default="[1000, 2000, 4000, 8000, 16000]">
+    Backoff intervals for reconnection attempts (ms)
+  </ParamField>
+  
+  <ParamField path="maxReconnectAttempts" type="number" default="5">
+    Maximum number of reconnection attempts
+  </ParamField>
+  
+  <ParamField path="validateFrames" type="boolean" default="false">
+    Enable frame validation
+  </ParamField>
+  
+  <ParamField path="maxEntriesPerView" type="number | null" default="10000">
+    Maximum entities to store per view (null = unlimited)
+  </ParamField>
+  
+  <ParamField path="flushIntervalMs" type="number" default="16">
+    Batch update flush interval in milliseconds
+  </ParamField>
+</ResponseField>
+
+## Instance Properties
+
+<ResponseField name="views" type="TypedViews<TStack['views']>">
+  Typed accessor for all views defined in the stack
+  
+  ```typescript
+  const users = client.views.users.list.use();
+  const user = await client.views.users.state.get({ id: '123' });
+  ```
+  
+  See [View Types](/api/typescript/views) for details.
+</ResponseField>
+
+<ResponseField name="connectionState" type="ConnectionState">
+  Current connection state
+  
+  ```typescript
+  type ConnectionState =
+    | 'disconnected'
+    | 'connecting'
+    | 'connected'
+    | 'reconnecting'
+    | 'error';
+  ```
+  
+  ```typescript
+  console.log(client.connectionState); // 'connected'
+  ```
+</ResponseField>
+
+<ResponseField name="store" type="EntityStore">
+  Underlying entity store for direct access
+  
+  ```typescript
+  const entity = client.store.getSync('users/list', 'user-123');
+  ```
+</ResponseField>
+
+## Instance Methods
+
+<ResponseField name="disconnect" type="method">
+  Disconnect from the server and clean up resources
+  
+  ```typescript
+  disconnect(): void
+  ```
+  
+  ### Example
+  
+  ```typescript
+  client.disconnect();
+  ```
+</ResponseField>
+
+<ResponseField name="onConnectionStateChange" type="method">
+  Subscribe to connection state changes
+  
+  ```typescript
+  onConnectionStateChange(
+    callback: (state: ConnectionState, error?: Error) => void
+  ): UnsubscribeFn
+  ```
+  
+  ### Parameters
+  
+  <ParamField path="callback" type="function" required>
+    Called when connection state changes
+  </ParamField>
+  
+  ### Returns
+  
+  Unsubscribe function to stop listening
+  
+  ### Example
+  
+  ```typescript
+  const unsubscribe = client.onConnectionStateChange((state, error) => {
+    console.log('Connection state:', state);
+    if (error) {
+      console.error('Connection error:', error);
+    }
+  });
+  
+  // Later: stop listening
+  unsubscribe();
+  ```
+</ResponseField>
+
+<ResponseField name="getSubscriptionRegistry" type="method">
+  Get the subscription registry for manual subscription management
+  
+  ```typescript
+  getSubscriptionRegistry(): SubscriptionRegistry
+  ```
+  
+  ### Example
+  
+  ```typescript
+  const registry = client.getSubscriptionRegistry();
+  const unsub = registry.subscribe({
+    view: 'users/list',
+    filters: { status: 'active' },
+  });
+  ```
+</ResponseField>
+
+## Stack Definition
+
+<ResponseField name="StackDefinition" type="interface">
+  Definition of entity schema and views
+  
+  ```typescript
+  interface StackDefinition {
+    readonly name: string;
+    readonly url: string;
+    readonly views: Record<string, ViewGroup>;
+    readonly schemas?: Record<string, Schema<unknown>>;
+    instructions?: Record<string, InstructionHandler>;
+  }
+  ```
+  
+  Typically generated by the HyperStack compiler from your stream definitions.
+  
+  ### Example
+  
+  ```typescript
+  export const MyStack = {
+    name: 'my-app',
+    url: 'ws://localhost:8877',
+    views: {
+      users: {
+        state: { mode: 'state', view: 'users/state' },
+        list: { mode: 'list', view: 'users/list' },
+      },
+    },
+  } as const satisfies StackDefinition;
+  ```
+</ResponseField>
+
+## Callbacks
+
+<ResponseField name="ConnectionStateCallback" type="type">
+  Callback for connection state changes
+  
+  ```typescript
+  type ConnectionStateCallback = (
+    state: ConnectionState,
+    error?: Error
+  ) => void;
+  ```
+</ResponseField>
+
+<ResponseField name="SubscribeCallback" type="type">
+  Callback for subscription events
+  
+  ```typescript
+  type SubscribeCallback = (view: string) => void;
+  ```
+</ResponseField>
+
+<ResponseField name="UnsubscribeFn" type="type">
+  Function to unsubscribe from events
+  
+  ```typescript
+  type UnsubscribeFn = () => void;
+  ```
+</ResponseField>
+
+## Usage Example
+
+```typescript
+import { HyperStack } from 'hyperstack-typescript';
+import { MyStack } from './generated/stack';
+
+async function main() {
+  // Connect to server
+  const client = await HyperStack.connect(MyStack, {
+    autoReconnect: true,
+  });
+
+  // Monitor connection state
+  client.onConnectionStateChange((state, error) => {
+    if (state === 'connected') {
+      console.log('Connected to HyperStack');
+    } else if (state === 'error') {
+      console.error('Connection error:', error);
+    }
+  });
+
+  // Access views
+  for await (const user of client.views.users.list.use()) {
+    console.log('User update:', user);
+  }
+
+  // Clean up
+  client.disconnect();
+}
+```

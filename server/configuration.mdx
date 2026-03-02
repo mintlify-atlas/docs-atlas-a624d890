@@ -1,0 +1,503 @@
+---
+title: Server Configuration
+description: Configure HyperStack server components and behavior
+---
+
+The HyperStack server provides a fluent builder API for configuration. All components are optional and have sensible defaults.
+
+## ServerConfig
+
+The main configuration struct that holds all component configs.
+
+**Location**: `config.rs:116-154`
+
+```rust
+pub struct ServerConfig {
+    pub websocket: Option<WebSocketConfig>,
+    pub yellowstone: Option<YellowstoneConfig>,
+    pub health: Option<HealthConfig>,
+    pub http_health: Option<HttpHealthConfig>,
+    pub reconnection: Option<ReconnectionConfig>,
+}
+```
+
+## Builder API
+
+### Basic Server
+
+```rust
+use hyperstack_server::Server;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    Server::builder()
+        .spec(my_spec())
+        .websocket()
+        .bind("[::]:8877".parse()?)
+        .start()
+        .await
+}
+```
+
+### Full Configuration
+
+```rust
+use hyperstack_server::{
+    Server, ServerConfig, WebSocketConfig, HealthConfig, 
+    HttpHealthConfig, ReconnectionConfig, YellowstoneConfig,
+};
+use std::time::Duration;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    Server::builder()
+        .spec(my_spec())
+        // WebSocket server
+        .websocket_config(
+            WebSocketConfig::new("[::]:8877".parse()?)
+        )
+        // Yellowstone gRPC
+        .yellowstone(
+            YellowstoneConfig::new("http://localhost:10000")
+                .with_token("your-token")
+        )
+        // Health monitoring
+        .health_config(
+            HealthConfig::new()
+                .with_heartbeat_interval(Duration::from_secs(30))
+                .with_health_check_timeout(Duration::from_secs(10))
+        )
+        // HTTP health endpoint
+        .http_health_config(
+            HttpHealthConfig::new("0.0.0.0:8081".parse()?)
+        )
+        // Reconnection behavior
+        .reconnection_config(
+            ReconnectionConfig::new()
+                .with_initial_delay(Duration::from_millis(100))
+                .with_max_delay(Duration::from_secs(60))
+                .with_backoff_multiplier(2.0)
+        )
+        .start()
+        .await
+}
+```
+
+## WebSocket Configuration
+
+**Location**: `config.rs:73-92`
+
+```rust
+pub struct WebSocketConfig {
+    pub bind_address: SocketAddr,
+}
+
+impl Default for WebSocketConfig {
+    fn default() -> Self {
+        Self {
+            bind_address: "[::]:8877".parse().unwrap(),
+        }
+    }
+}
+```
+
+### Examples
+
+```rust
+// Use default (binds to [::]:8877)
+Server::builder()
+    .websocket()
+    .start().await;
+
+// Custom address
+Server::builder()
+    .bind("0.0.0.0:9000".parse()?)
+    .start().await;
+
+// Full config
+Server::builder()
+    .websocket_config(
+        WebSocketConfig::new("127.0.0.1:8877".parse()?)
+    )
+    .start().await;
+```
+
+## Yellowstone Configuration
+
+**Location**: `config.rs:95-113`
+
+```rust
+pub struct YellowstoneConfig {
+    pub endpoint: String,
+    pub x_token: Option<String>,
+}
+```
+
+### Examples
+
+```rust
+// Without token
+Server::builder()
+    .yellowstone(
+        YellowstoneConfig::new("http://localhost:10000")
+    )
+    .start().await;
+
+// With authentication token
+Server::builder()
+    .yellowstone(
+        YellowstoneConfig::new("https://api.mainnet-beta.solana.com")
+            .with_token(std::env::var("YELLOWSTONE_TOKEN")?)
+    )
+    .start().await;
+```
+
+## Health Monitoring
+
+**Location**: `health.rs:45-74`
+
+```rust
+pub struct HealthConfig {
+    pub heartbeat_interval: Duration,
+    pub health_check_timeout: Duration,
+}
+
+impl Default for HealthConfig {
+    fn default() -> Self {
+        Self {
+            heartbeat_interval: Duration::from_secs(30),
+            health_check_timeout: Duration::from_secs(10),
+        }
+    }
+}
+```
+
+### Examples
+
+```rust
+// Use defaults
+Server::builder()
+    .health_monitoring()
+    .start().await;
+
+// Custom intervals
+Server::builder()
+    .health_config(
+        HealthConfig::new()
+            .with_heartbeat_interval(Duration::from_secs(15))
+            .with_health_check_timeout(Duration::from_secs(5))
+    )
+    .start().await;
+```
+
+### Health Status
+
+The health monitor tracks:
+
+- **Stream status** - Connected, Disconnected, Reconnecting, Error
+- **Last event time** - Timestamp of most recent event
+- **Error count** - Number of stream errors
+- **Connection uptime** - Duration since last connection
+
+```rust
+let monitor = HealthMonitor::new(HealthConfig::default());
+
+// Check if healthy
+let is_healthy = monitor.is_healthy().await;
+
+// Get status
+let status = monitor.status().await;
+match status {
+    StreamStatus::Connected => println!("Connected"),
+    StreamStatus::Disconnected => println!("Disconnected"),
+    StreamStatus::Reconnecting => println!("Reconnecting"),
+    StreamStatus::Error(err) => println!("Error: {}", err),
+}
+```
+
+## HTTP Health Server
+
+**Location**: `http_health.rs`
+
+The HTTP health server provides endpoints for container orchestrators (Kubernetes, Docker Compose).
+
+```rust
+pub struct HttpHealthConfig {
+    pub bind_address: SocketAddr,
+}
+
+impl Default for HttpHealthConfig {
+    fn default() -> Self {
+        Self {
+            bind_address: "0.0.0.0:8081".parse().unwrap(),
+        }
+    }
+}
+```
+
+### Endpoints
+
+**GET /health**
+- Always returns 200 OK (liveness probe)
+- Response: `{"status": "ok"}`
+
+**GET /ready**
+- Returns 200 if stream is healthy, 503 if unhealthy (readiness probe)
+- Response: `{"ready": true}` or `{"ready": false}`
+
+### Examples
+
+```rust
+// Use default (port 8081)
+Server::builder()
+    .http_health()
+    .start().await;
+
+// Custom port
+Server::builder()
+    .health_bind("0.0.0.0:9090".parse()?)
+    .start().await;
+
+// Full config
+Server::builder()
+    .http_health_config(
+        HttpHealthConfig::new("127.0.0.1:8081".parse()?)
+    )
+    .start().await;
+```
+
+### Kubernetes Integration
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: hyperstack-server
+spec:
+  containers:
+  - name: server
+    image: hyperstack-server:latest
+    ports:
+    - containerPort: 8877
+      name: websocket
+    - containerPort: 8081
+      name: health
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: health
+      initialDelaySeconds: 10
+      periodSeconds: 30
+    readinessProbe:
+      httpGet:
+        path: /ready
+        port: health
+      initialDelaySeconds: 5
+      periodSeconds: 10
+```
+
+## Reconnection Configuration
+
+**Location**: `config.rs:8-70`
+
+Controls exponential backoff behavior for Yellowstone gRPC reconnection.
+
+```rust
+pub struct ReconnectionConfig {
+    pub initial_delay: Duration,
+    pub max_delay: Duration,
+    pub max_attempts: Option<u32>,
+    pub backoff_multiplier: f64,
+    pub http2_keep_alive_interval: Option<Duration>,
+}
+
+impl Default for ReconnectionConfig {
+    fn default() -> Self {
+        Self {
+            initial_delay: Duration::from_millis(100),
+            max_delay: Duration::from_secs(60),
+            max_attempts: None, // Infinite retries
+            backoff_multiplier: 2.0,
+            http2_keep_alive_interval: Some(Duration::from_secs(30)),
+        }
+    }
+}
+```
+
+### Backoff Algorithm
+
+```rust
+impl ReconnectionConfig {
+    pub fn next_backoff(&self, current: Duration) -> Duration {
+        let next_secs = current.as_secs_f64() * self.backoff_multiplier;
+        let capped_secs = next_secs.min(self.max_delay.as_secs_f64());
+        Duration::from_secs_f64(capped_secs)
+    }
+}
+```
+
+**Example Backoff Sequence** (multiplier = 2.0):
+1. 100ms
+2. 200ms
+3. 400ms
+4. 800ms
+5. 1.6s
+6. 3.2s
+7. 6.4s
+8. 12.8s
+9. 25.6s
+10. 51.2s
+11. 60s (capped)
+
+### Examples
+
+```rust
+// Use defaults
+Server::builder()
+    .reconnection()
+    .start().await;
+
+// Aggressive reconnection
+Server::builder()
+    .reconnection_config(
+        ReconnectionConfig::new()
+            .with_initial_delay(Duration::from_millis(50))
+            .with_max_delay(Duration::from_secs(10))
+            .with_backoff_multiplier(1.5)
+    )
+    .start().await;
+
+// Limited attempts
+Server::builder()
+    .reconnection_config(
+        ReconnectionConfig::new()
+            .with_max_attempts(10) // Give up after 10 tries
+    )
+    .start().await;
+```
+
+## Entity Cache Configuration
+
+**Location**: `cache.rs`
+
+```rust
+pub struct EntityCacheConfig {
+    pub max_entities_per_view: usize,
+    pub initial_snapshot_batch_size: usize,
+    pub subsequent_snapshot_batch_size: usize,
+}
+
+impl Default for EntityCacheConfig {
+    fn default() -> Self {
+        Self {
+            max_entities_per_view: 500,
+            initial_snapshot_batch_size: 50,
+            subsequent_snapshot_batch_size: 100,
+        }
+    }
+}
+```
+
+### Snapshot Batching
+
+The cache sends snapshots in batches to avoid large initial payloads:
+
+1. **Initial batch** - First 50 entities (quick initial render)
+2. **Subsequent batches** - 100 entities each (efficient bulk transfer)
+3. **Complete flag** - Last batch sets `complete: true`
+
+```json
+// First batch
+{"op": "snapshot", "data": [...50 entities...], "complete": false}
+
+// Second batch  
+{"op": "snapshot", "data": [...100 entities...], "complete": false}
+
+// Final batch
+{"op": "snapshot", "data": [...remaining...], "complete": true}
+```
+
+## VM State Configuration
+
+**Location**: `interpreter/src/vm.rs:659-687`
+
+```rust
+pub struct StateTableConfig {
+    pub max_entries: usize,
+    pub max_array_length: usize,
+}
+
+impl Default for StateTableConfig {
+    fn default() -> Self {
+        Self {
+            max_entries: 2_500,
+            max_array_length: 100,
+        }
+    }
+}
+```
+
+### Example
+
+```rust
+use hyperstack_interpreter::vm::{VmContext, StateTableConfig};
+
+let config = StateTableConfig {
+    max_entries: 5_000,      // Store more entities
+    max_array_length: 200,   // Allow longer arrays
+};
+
+let vm = VmContext::new_with_config(config);
+```
+
+## Environment Variables
+
+The server respects these environment variables:
+
+### Logging
+
+```bash
+# Set log level
+RUST_LOG=info
+RUST_LOG=hyperstack_server=debug,hyperstack_interpreter=trace
+
+# Enable JSON logs
+JSON_LOGS=true
+```
+
+### OpenTelemetry (with `otel` feature)
+
+```bash
+# OTLP endpoint
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+
+# Service name
+OTEL_SERVICE_NAME=hyperstack-server
+```
+
+### Example .env
+
+```bash
+RUST_LOG=info,hyperstack_server=debug
+JSON_LOGS=true
+YELLOWSTONE_ENDPOINT=https://api.mainnet-beta.solana.com
+YELLOWSTONE_TOKEN=your-token-here
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Deployment" icon="rocket" href="/server/deployment">
+    Deploy to production
+  </Card>
+  <Card title="Monitoring" icon="chart-line" href="/server/monitoring">
+    Set up observability
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/server/architecture">
+    Understand the architecture
+  </Card>
+  <Card title="WebSocket Protocol" icon="plug" href="/server/websocket-protocol">
+    Learn the WebSocket protocol
+  </Card>
+</CardGroup>

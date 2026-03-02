@@ -1,0 +1,234 @@
+---
+title: Finding IDLs
+description: How to find IDL files for Solana programs when building custom Hyperstack stacks
+---
+
+Hyperstack uses IDL (Interface Definition Language) files to generate type-safe bindings for your data streams. An IDL is a JSON file that describes a Solana program's accounts, instructions, and custom types.
+
+To build a custom stack, you need the IDL for the program you want to track.
+
+---
+
+## Methods to Find IDLs
+
+Follow these steps in order to find the IDL for any Solana program.
+
+### 1. Program GitHub Repository
+
+Most Solana projects are open source. Search GitHub for the protocol name followed by "idl.json" or look in the project's repository. Common locations include:
+
+- `target/idl/program_name.json`
+- `idl/program_name.json`
+- The "Releases" page as an attached asset
+
+### 2. Anchor CLI Fetch
+
+If a program is built with Anchor and the developers uploaded the IDL on-chain, you can fetch it directly using the Anchor CLI:
+
+```bash
+anchor idl fetch <PROGRAM_ID> --provider.cluster mainnet -o idl/program.json
+```
+
+Replace `<PROGRAM_ID>` with the program's on-chain address. Not every program has an IDL on-chain, so this may return an error if it's missing.
+
+### 3. NPM or Rust Packages
+
+Many protocols publish SDKs for developers. These packages often include the IDL file so the SDK can encode and decode instructions.
+
+- **NPM:** Check `node_modules/@protocol-name/sdk/dist/idl.json` or similar paths
+- **Crates.io:** Some Rust crates include the IDL as a resource
+
+### 4. Block Explorers
+
+Explorers like Solscan or Solana.fm sometimes host IDLs for verified programs. Look for a "Contract" or "IDL" tab when viewing a program address. You can often download the JSON directly from these pages.
+
+### 5. Manual Creation
+
+If an IDL isn't available, you can create one manually by examining the program's source code. Tools like Kinobi or Codama can generate IDLs by parsing the Rust source.
+
+---
+
+## Where to Put IDLs
+
+In a Hyperstack project, store your IDL files in an `idl/` directory at the root of your stack:
+
+```text
+my-stack/
+├── idl/
+│   └── program_name.json    # IDL goes here
+├── src/
+│   └── lib.rs               # References the IDL
+├── hyperstack.toml
+└── Cargo.toml
+```
+
+Reference the IDL in your stack using the `#[hyperstack]` macro:
+
+```rust
+use hyperstack::prelude::*;
+
+#[hyperstack(idl = "idl/program_name.json")]
+pub mod my_stack {
+    // Entity definitions...
+}
+```
+
+---
+
+## Using Multiple IDLs
+
+For multi-program stacks, pass an array of IDL paths:
+
+```rust
+#[hyperstack(idl = ["idl/ore.json", "idl/entropy.json"])]
+pub mod my_stack {
+    // Can now reference ore_sdk::* and entropy_sdk::*
+}
+```
+
+Each IDL generates its own namespaced SDK module based on the program name in the IDL metadata.
+
+---
+
+## Common IDL Locations
+
+| Protocol       | Program ID                                     | Source                                         |
+| -------------- | ---------------------------------------------- | ---------------------------------------------- |
+| ORE            | `oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp` | [GitHub](https://github.com/regolith-labs/ore) |
+| System Program | `11111111111111111111111111111111`             | Built-in                                       |
+| Token Program  | `TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`  | Built-in                                       |
+
+---
+
+## Exploring IDLs with the CLI
+
+Once you have an IDL file, use `hs idl` to explore it before writing your stack:
+
+```bash
+# Get a quick overview
+hs idl summary idl/program.json
+
+# Browse all instructions
+hs idl instructions idl/program.json
+
+# Find how accounts relate to each other
+hs idl relations idl/program.json
+
+# Search for anything
+hs idl search idl/program.json <query>
+```
+
+### Example: Exploring the ORE IDL
+
+```bash
+# See all accounts and instructions
+hs idl summary idl/ore.json
+```
+
+**Output:**
+```text
+Accounts:
+  - Round
+  - Treasury
+  - Miner
+  - Automation
+
+Instructions:
+  - Deploy
+  - Checkpoint
+  - Reset
+  - ClaimOre
+  - ClaimSol
+```
+
+```bash
+# See what accounts the Deploy instruction uses
+hs idl instructions idl/ore.json Deploy
+```
+
+**Output:**
+```text
+Deploy instruction:
+  Arguments:
+    - amount: u64
+    - square: u64
+  Accounts:
+    - round (Round)
+    - miner (Miner)
+    - authority (Signer)
+```
+
+```bash
+# Find relationships between accounts
+hs idl relations idl/ore.json
+```
+
+This shows which instructions reference multiple accounts together — critical information for cross-account resolution with `register_from`.
+
+---
+
+## IDL Structure
+
+An IDL contains:
+
+### Metadata
+
+```json
+{
+  "version": "0.1.0",
+  "name": "ore",
+  "instructions": [...],
+  "accounts": [...],
+  "types": [...]
+}
+```
+
+The `name` field determines the SDK module prefix (e.g., `ore` → `ore_sdk`).
+
+### Accounts
+
+```json
+{
+  "name": "Round",
+  "type": {
+    "kind": "struct",
+    "fields": [
+      { "name": "id", "type": "u64" },
+      { "name": "motherlode", "type": "u64" },
+      { "name": "total_deployed", "type": "u64" }
+    ]
+  }
+}
+```
+
+These become `ore_sdk::accounts::Round::id`, `ore_sdk::accounts::Round::motherlode`, etc.
+
+### Instructions
+
+```json
+{
+  "name": "Deploy",
+  "accounts": [
+    { "name": "round", "isMut": true, "isSigner": false },
+    { "name": "miner", "isMut": true, "isSigner": false },
+    { "name": "authority", "isMut": false, "isSigner": true }
+  ],
+  "args": [
+    { "name": "amount", "type": "u64" },
+    { "name": "square", "type": "u64" }
+  ]
+}
+```
+
+These become:
+- `ore_sdk::instructions::Deploy` (instruction type)
+- `accounts::round`, `accounts::miner`, `accounts::authority` (account references)
+- `args::amount`, `args::square` (instruction arguments)
+
+---
+
+## Next Steps
+
+- [Stack Definitions](/building-stacks/stack-definitions) — Learn how to use IDLs in your stack
+- [Rust DSL](/building-stacks/rust-dsl) — Complete macro reference for mapping IDL fields
+- [Your First Stack](/building-stacks/getting-started) — Build a complete example

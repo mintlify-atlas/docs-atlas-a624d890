@@ -1,0 +1,350 @@
+---
+title: hyperstack-server
+description: WebSocket server and projection handlers for HyperStack streaming pipelines
+---
+
+The `hyperstack-server` crate provides a builder API for creating HyperStack servers that process Solana blockchain data and stream entity updates over WebSockets.
+
+<Info>
+  View on [docs.rs](https://docs.rs/hyperstack-server)
+</Info>
+
+## Installation
+
+```toml
+[dependencies]
+hyperstack-server = "0.2"
+```
+
+## Quick Start
+
+```rust
+use hyperstack_server::{Server, Spec};
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    Server::builder()
+        .spec(my_spec())
+        .websocket()
+        .bind("[::]:8877".parse()?)
+        .health_monitoring()
+        .start()
+        .await
+}
+```
+
+## Core Types
+
+### Server Builder
+
+<ResponseField name="Server" type="struct">
+  Main server interface with fluent builder API
+  
+  ```rust
+  let builder = Server::builder();
+  ```
+</ResponseField>
+
+<ResponseField name="ServerBuilder" type="struct">
+  Builder for configuring HyperStack servers
+  
+  ### Methods
+  
+  <ParamField path="spec" type="fn(Spec) -> Self">
+    Set the specification (bytecode, parsers, program IDs)
+  </ParamField>
+  
+  <ParamField path="views" type="fn(ViewIndex) -> Self">
+    Set custom view index
+  </ParamField>
+  
+  <ParamField path="metrics" type="fn(Metrics) -> Self">
+    Enable metrics collection (requires `otel` feature)
+  </ParamField>
+  
+  <ParamField path="websocket" type="fn() -> Self">
+    Enable WebSocket server with default configuration
+  </ParamField>
+  
+  <ParamField path="websocket_config" type="fn(WebSocketConfig) -> Self">
+    Configure WebSocket server
+  </ParamField>
+  
+  <ParamField path="bind" type="fn(SocketAddr) -> Self">
+    Set the bind address for WebSocket server
+  </ParamField>
+  
+  <ParamField path="yellowstone" type="fn(YellowstoneConfig) -> Self">
+    Configure Yellowstone gRPC connection
+  </ParamField>
+  
+  <ParamField path="health_monitoring" type="fn() -> Self">
+    Enable health monitoring with default configuration
+  </ParamField>
+  
+  <ParamField path="health_config" type="fn(HealthConfig) -> Self">
+    Configure health monitoring
+  </ParamField>
+  
+  <ParamField path="reconnection" type="fn() -> Self">
+    Enable reconnection with default configuration
+  </ParamField>
+  
+  <ParamField path="reconnection_config" type="fn(ReconnectionConfig) -> Self">
+    Configure reconnection behavior
+  </ParamField>
+  
+  <ParamField path="http_health" type="fn() -> Self">
+    Enable HTTP health server on port 8081
+  </ParamField>
+  
+  <ParamField path="http_health_config" type="fn(HttpHealthConfig) -> Self">
+    Configure HTTP health server
+  </ParamField>
+  
+  <ParamField path="health_bind" type="fn(SocketAddr) -> Self">
+    Set the bind address for HTTP health server
+  </ParamField>
+  
+  <ParamField path="start" type="async fn() -> Result<()>">
+    Build and start the server
+  </ParamField>
+  
+  <ParamField path="build" type="fn() -> Result<Runtime>">
+    Build the runtime without starting it
+  </ParamField>
+</ResponseField>
+
+### Specification
+
+<ResponseField name="Spec" type="struct">
+  Specification for a HyperStack server containing bytecode and configuration
+  
+  ```rust
+  pub struct Spec {
+      pub bytecode: MultiEntityBytecode,
+      pub program_ids: Vec<String>,
+      pub parser_setup: Option<ParserSetupFn>,
+      pub views: Vec<ViewDef>,
+  }
+  ```
+  
+  ### Methods
+  
+  <ParamField path="new" type="fn(bytecode, program_id) -> Self">
+    Create a new spec with bytecode and program ID
+  </ParamField>
+  
+  <ParamField path="with_parser_setup" type="fn(ParserSetupFn) -> Self">
+    Add custom parser setup function
+  </ParamField>
+  
+  <ParamField path="with_views" type="fn(Vec<ViewDef>) -> Self">
+    Add view definitions
+  </ParamField>
+</ResponseField>
+
+## Configuration Types
+
+<ResponseField name="ServerConfig" type="struct">
+  Main server configuration
+</ResponseField>
+
+<ResponseField name="WebSocketConfig" type="struct">
+  WebSocket server configuration including bind address
+</ResponseField>
+
+<ResponseField name="YellowstoneConfig" type="struct">
+  Yellowstone gRPC endpoint configuration
+</ResponseField>
+
+<ResponseField name="HealthConfig" type="struct">
+  Health monitoring configuration
+</ResponseField>
+
+<ResponseField name="HttpHealthConfig" type="struct">
+  HTTP health endpoint configuration
+</ResponseField>
+
+<ResponseField name="ReconnectionConfig" type="struct">
+  Reconnection behavior configuration
+</ResponseField>
+
+## Components
+
+### Bus
+
+<ResponseField name="BusManager" type="struct">
+  Message bus for broadcasting mutations across the system
+</ResponseField>
+
+<ResponseField name="BusMessage" type="enum">
+  Messages sent over the bus
+</ResponseField>
+
+### Cache
+
+<ResponseField name="EntityCache" type="struct">
+  In-memory cache for entity state
+</ResponseField>
+
+<ResponseField name="EntityCacheConfig" type="struct">
+  Configuration for entity caching
+</ResponseField>
+
+### Health Monitoring
+
+<ResponseField name="HealthMonitor" type="struct">
+  Monitors stream health and slot progress
+</ResponseField>
+
+<ResponseField name="SlotTracker" type="struct">
+  Tracks slot progression
+</ResponseField>
+
+<ResponseField name="StreamStatus" type="enum">
+  Stream status (Healthy, Degraded, Down)
+</ResponseField>
+
+<ResponseField name="HttpHealthServer" type="struct">
+  HTTP server for health checks
+</ResponseField>
+
+### Materialized Views
+
+<ResponseField name="MaterializedView" type="struct">
+  Derived view with transformation pipeline
+</ResponseField>
+
+<ResponseField name="MaterializedViewRegistry" type="struct">
+  Registry for managing materialized views
+</ResponseField>
+
+<ResponseField name="ViewEffect" type="enum">
+  Effect of a view update (Insert, Update, Delete)
+</ResponseField>
+
+### Projector
+
+<ResponseField name="Projector" type="struct">
+  Processes blockchain events and maintains entity projections
+</ResponseField>
+
+### Runtime
+
+<ResponseField name="Runtime" type="struct">
+  Main runtime that orchestrates all components
+</ResponseField>
+
+### Mutation Batch
+
+<ResponseField name="MutationBatch" type="struct">
+  Batched mutations with slot context
+</ResponseField>
+
+<ResponseField name="EventContext" type="struct">
+  Context for events within a mutation batch
+</ResponseField>
+
+<ResponseField name="SlotContext" type="struct">
+  Slot and timing context
+</ResponseField>
+
+### Views
+
+<ResponseField name="ViewSpec" type="struct">
+  Specification for a view (List, State, or Append mode)
+  
+  ```rust
+  pub struct ViewSpec {
+      pub id: String,
+      pub export: String,
+      pub mode: Mode,
+      pub projection: Projection,
+      pub filters: Filters,
+      pub delivery: Delivery,
+      pub pipeline: Option<Vec<PipelineStage>>,
+      pub source_view: Option<String>,
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="ViewIndex" type="struct">
+  Index of all views by ID
+</ResponseField>
+
+<ResponseField name="Projection" type="struct">
+  Field projection configuration
+</ResponseField>
+
+<ResponseField name="Filters" type="struct">
+  View filters
+</ResponseField>
+
+<ResponseField name="Delivery" type="struct">
+  Delivery options (sorting, pagination)
+</ResponseField>
+
+### WebSocket
+
+<ResponseField name="WebSocketServer" type="struct">
+  WebSocket server for streaming updates to clients
+</ResponseField>
+
+<ResponseField name="ClientManager" type="struct">
+  Manages connected WebSocket clients
+</ResponseField>
+
+<ResponseField name="ClientInfo" type="struct">
+  Information about a connected client
+</ResponseField>
+
+<ResponseField name="Subscription" type="struct">
+  Client subscription to a view
+</ResponseField>
+
+<ResponseField name="Frame" type="enum">
+  WebSocket frame types (Entity, Snapshot, Subscribed)
+</ResponseField>
+
+<ResponseField name="Mode" type="enum">
+  View modes (State, List, Append)
+</ResponseField>
+
+## Telemetry
+
+<ResponseField name="init" type="fn">
+  Initialize basic telemetry (tracing)
+  
+  ```rust
+  use hyperstack_server::telemetry;
+  
+  telemetry::init(TelemetryConfig::default())?;
+  ```
+</ResponseField>
+
+<ResponseField name="init_with_otel" type="fn">
+  Initialize telemetry with OpenTelemetry (requires `otel` feature)
+  
+  Returns a `TelemetryGuard` that must be kept alive.
+</ResponseField>
+
+<ResponseField name="TelemetryConfig" type="struct">
+  Telemetry configuration
+</ResponseField>
+
+<ResponseField name="TelemetryGuard" type="struct">
+  Guard that flushes telemetry on drop (requires `otel` feature)
+</ResponseField>
+
+## Metrics
+
+<ResponseField name="Metrics" type="struct">
+  OpenTelemetry metrics collector (requires `otel` feature)
+</ResponseField>
+
+## Feature Flags
+
+<ParamField path="otel" type="feature">
+  Enables OpenTelemetry integration for metrics and distributed tracing
+</ParamField>

@@ -1,0 +1,580 @@
+---
+title: Entities
+description: Learn how to define and structure entities in Hyperstack
+---
+
+Entities are the core data structures in Hyperstack. They represent aggregated, typed state derived from on-chain events. This page explains how entities work and how to define them.
+
+## What is an Entity?
+
+An **entity** is a structured object that represents on-chain state. Entities are:
+
+- **Aggregated**: Built from multiple events over time
+- **Typed**: Strongly typed with Rust type safety
+- **Keyed**: Identified by a unique primary key
+- **Mutable**: Updated as new events arrive
+- **Queryable**: Accessible via client SDKs
+
+### Example
+
+```rust
+#[entity(name = "Token")]
+#[derive(Stream)]
+pub struct Token {
+    // Primary key (identity)
+    #[map(CreateIx::mint, primary_key)]
+    pub mint: String,
+    
+    // Metadata (from account)
+    #[map(BondingCurve::virtual_sol_reserves)]
+    pub sol_reserves: u64,
+    
+    #[map(BondingCurve::virtual_token_reserves)]
+    pub token_reserves: u64,
+    
+    // Aggregations (from instructions)
+    #[aggregate(from = BuyIx, field = amount, strategy = Sum)]
+    pub total_volume: u64,
+    
+    #[aggregate(from = BuyIx, strategy = Count)]
+    pub trade_count: u64,
+    
+    // Events (instruction history)
+    #[event(from = BuyIx, strategy = Append)]
+    pub trades: Vec<TradeEvent>,
+}
+```
+
+This entity:
+- Has a primary key: `mint`
+- Tracks account state: `sol_reserves`, `token_reserves`
+- Aggregates metrics: `total_volume`, `trade_count`
+- Captures history: `trades`
+
+## Entity Definition
+
+### Basic Structure
+
+Entities are defined using the `#[entity]` attribute on a Rust struct:
+
+```rust
+#[entity(name = "EntityName")]
+#[derive(Stream)]
+pub struct EntityName {
+    // Fields with mapping attributes
+}
+```
+
+**Required:**
+- `#[entity(name = "...")]` - Sets the entity name (used in client SDKs)
+- `#[derive(Stream)]` - Generates stream processing code
+- At least one field with `primary_key` attribute
+
+### Entity Sections
+
+You can organize fields into logical sections using nested structs:
+
+```rust
+#[entity(name = "Token")]
+#[derive(Stream)]
+pub struct Token {
+    pub id: TokenId,
+    pub info: TokenInfo,
+    pub trading: TradingMetrics,
+}
+
+pub struct TokenId {
+    #[map(CreateIx::mint, primary_key)]
+    pub mint: String,
+}
+
+pub struct TokenInfo {
+    #[map(BondingCurve::virtual_sol_reserves)]
+    pub sol_reserves: u64,
+    
+    #[map(BondingCurve::virtual_token_reserves)]
+    pub token_reserves: u64,
+    
+    #[computed(sol_reserves / token_reserves)]
+    pub price: Option<f64>,
+}
+
+pub struct TradingMetrics {
+    #[aggregate(from = BuyIx, field = amount, strategy = Sum)]
+    pub total_volume: u64,
+    
+    #[aggregate(from = BuyIx, strategy = Count)]
+    pub trade_count: u64,
+}
+```
+
+**Benefits:**
+- Better organization
+- Namespaced fields (`info.price`, `trading.volume`)
+- Easier to understand complex entities
+
+## Primary Keys
+
+Every entity must have a **primary key** that uniquely identifies it.
+
+### Defining a Primary Key
+
+Add the `primary_key` attribute to a field:
+
+```rust
+#[map(CreateIx::mint, primary_key)]
+pub mint: String,
+```
+
+### Primary Key Rules
+
+<Warning>
+  **Constraints:**
+  - Every entity must have exactly one primary key
+  - Primary keys are immutable once set
+  - Primary key must use `SetOnce` strategy (implicit)
+  - Must come from a source that provides the key
+</Warning>
+
+### Primary Key Sources
+
+#### From Instruction Argument
+
+```rust
+#[map(CreateIx::mint, primary_key)]
+pub mint: String,
+```
+
+Extracts `mint` from the `CreateIx` instruction's arguments.
+
+#### From Instruction Account
+
+```rust
+#[map(CreateIx::accounts::mint, primary_key)]
+pub mint: String,
+```
+
+Extracts `mint` from the `CreateIx` instruction's accounts.
+
+#### From Account Field
+
+```rust
+#[map(BondingCurve::mint, primary_key)]
+pub mint: String,
+```
+
+Extracts `mint` from the `BondingCurve` account data.
+
+## Lookup Indexes
+
+Lookup indexes enable cross-entity references by creating reverse mappings.
+
+### Creating a Lookup Index
+
+```rust
+#[map(BondingCurve::mint, lookup_index)]
+pub mint: String,
+```
+
+This creates a reverse mapping: `bonding_curve_address → mint`
+
+### Using a Lookup Index
+
+Once registered, other handlers can use the lookup:
+
+```rust
+#[entity(name = "Token")]
+pub struct Token {
+    #[map(CreateIx::mint, primary_key)]
+    pub mint: String,
+    
+    // Register lookup: bonding_curve → mint
+    #[map(BondingCurve::mint, lookup_index)]
+    pub mint_from_curve: String,
+    
+    // Use lookup to resolve mint from curve address
+    #[map(TradeIx::bonding_curve)]
+    pub bonding_curve: String,  // Automatically looks up mint
+}
+```
+
+### Temporal Indexes
+
+Temporal indexes handle keys that change over time:
+
+```rust
+#[map(UpdateRoundIx::round_id, lookup_index, temporal_field = "timestamp")]
+pub round_id: u64,
+```
+
+This creates a time-based mapping that resolves `round_id` based on when an event occurred.
+
+**Use Case**: ORE mining rounds change every epoch. Events need to be associated with the round active at their timestamp.
+
+## Field Types
+
+Hyperstack supports all Rust primitive types and many complex types:
+
+### Primitive Types
+
+```rust
+pub struct Entity {
+    pub u8_field: u8,
+    pub u16_field: u16,
+    pub u32_field: u32,
+    pub u64_field: u64,
+    pub u128_field: u128,
+    pub i8_field: i8,
+    pub i16_field: i16,
+    pub i32_field: i32,
+    pub i64_field: i64,
+    pub i128_field: i128,
+    pub bool_field: bool,
+    pub string_field: String,
+}
+```
+
+### Optional Types
+
+```rust
+pub struct Entity {
+    #[map(Account::optional_value)]
+    pub optional: Option<u64>,
+}
+```
+
+### Array Types
+
+```rust
+pub struct Entity {
+    // Fixed-size array
+    pub bytes: [u8; 32],
+    
+    // Dynamic array (requires Append strategy)
+    #[event(from = TradeIx, strategy = Append)]
+    pub trades: Vec<TradeEvent>,
+}
+```
+
+### Solana Types
+
+```rust
+pub struct Entity {
+    #[map(Account::mint)]
+    pub mint: String,  // Pubkey serialized as base58
+    
+    #[map(Account::owner, transform = Base58Encode)]
+    pub owner: String,
+}
+```
+
+### Custom Types (from IDL)
+
+```rust
+// Defined in your program's IDL
+pub struct Entity {
+    #[map(Account::config)]
+    pub config: ConfigData,  // Custom type from IDL
+}
+```
+
+## Entity Lifecycle
+
+### Creation
+
+An entity is created when its primary key is first encountered:
+
+1. Event arrives (account or instruction)
+2. Handler executes bytecode
+3. Primary key extracted from event
+4. Entity doesn't exist in state table
+5. New entity initialized with default values
+6. Mappings applied
+7. Entity saved to state table
+
+### Updates
+
+Existing entities are updated when new events arrive:
+
+1. Event arrives
+2. Primary key extracted
+3. Entity loaded from state table
+4. Mappings applied (respecting strategies)
+5. Computed fields evaluated
+6. Entity saved back to state table
+7. Mutation emitted to clients
+
+### Eviction
+
+Entities are evicted from the state table when capacity is reached:
+
+- **Policy**: LRU (Least Recently Used)
+- **Default Capacity**: 2,500 entities per table
+- **Behavior**: Least-accessed entities evicted first
+- **Recovery**: Evicted entities rebuilt from events if accessed again
+
+<Info>
+  **Eviction Strategy**: Hyperstack uses LRU eviction to bound memory. If your entity is evicted and later accessed, it will be rebuilt from the next relevant event. This means recent state may be lost for rarely-accessed entities.
+</Info>
+
+## Entity Storage
+
+Entities are stored in **state tables** within the VM:
+
+```rust
+pub struct StateTable {
+    data: DashMap<Value, Value>,        // primary_key → entity_state
+    access_times: DashMap<Value, i64>,  // LRU tracking
+    config: StateTableConfig,
+}
+
+pub struct StateTableConfig {
+    pub max_entries: usize,      // Default: 2,500
+    pub max_array_length: usize, // Default: 100
+}
+```
+
+### Access Patterns
+
+**Read (with touch):**
+```rust
+let entity = state_table.get_and_touch(&primary_key)?;
+```
+Updates access time for LRU.
+
+**Write (with eviction):**
+```rust
+state_table.insert_with_eviction(primary_key, entity);
+```
+Evicts LRU if at capacity before inserting.
+
+## Type Mapping
+
+Hyperstack automatically maps Rust types to SDK types:
+
+| Rust Type | TypeScript Type | Python Type |
+|-----------|-----------------|-------------|
+| `u8`, `u16`, `u32` | `number` | `int` |
+| `u64`, `u128` | `bigint` | `int` |
+| `i8`, `i16`, `i32` | `number` | `int` |
+| `i64`, `i128` | `bigint` | `int` |
+| `bool` | `boolean` | `bool` |
+| `String` | `string` | `str` |
+| `Option<T>` | `T \| null` | `Optional[T]` |
+| `Vec<T>` | `T[]` | `list[T]` |
+| `[u8; 32]` | `string` (base58) | `str` |
+| Custom struct | Interface | `@dataclass` |
+
+## Entity Metadata
+
+The AST captures complete metadata about entities:
+
+```rust
+pub struct EntitySection {
+    pub name: String,                      // Section name (e.g., "info")
+    pub fields: Vec<FieldTypeInfo>,        // All fields in section
+    pub is_nested_struct: bool,            // Is this a nested struct?
+    pub parent_field: Option<String>,      // Parent field if nested
+}
+
+pub struct FieldTypeInfo {
+    pub field_name: String,                // Field name
+    pub rust_type_name: String,            // "Option<u64>"
+    pub base_type: BaseType,               // Integer, String, etc.
+    pub is_optional: bool,                 // true for Option<T>
+    pub is_array: bool,                    // true for Vec<T>
+    pub inner_type: Option<String>,        // "u64" for Option<u64>
+    pub source_path: Option<String>,       // Where field comes from
+    pub resolved_type: Option<ResolvedStructType>,
+    pub emit: bool,                        // Include in mutations?
+}
+```
+
+This metadata is used for:
+- SDK generation
+- Type validation
+- Client-side type inference
+
+## Best Practices
+
+### Naming
+
+<Note>
+  **Conventions:**
+  - Entity names: PascalCase (`Token`, `UserProfile`)
+  - Field names: snake_case (`total_volume`, `created_at`)
+  - Section names: snake_case (`trading`, `metadata`)
+</Note>
+
+### Organization
+
+Group related fields into sections:
+
+```rust
+// Good: Organized into sections
+#[entity(name = "Token")]
+pub struct Token {
+    pub id: TokenId,
+    pub info: TokenInfo,
+    pub trading: TradingMetrics,
+}
+
+// Avoid: Flat structure with many fields
+#[entity(name = "Token")]
+pub struct Token {
+    pub mint: String,
+    pub sol_reserves: u64,
+    pub token_reserves: u64,
+    pub total_volume: u64,
+    pub trade_count: u64,
+    // ... 20 more fields
+}
+```
+
+### Performance
+
+Consider entity access patterns:
+
+```rust
+// If you query by user frequently, make user the primary key
+#[entity(name = "UserStats")]
+pub struct UserStats {
+    #[map(TradeIx::user, primary_key)]
+    pub user: String,
+    
+    #[aggregate(from = TradeIx, field = amount, strategy = Sum)]
+    pub total_volume: u64,
+}
+
+// If you query by mint frequently, use mint as primary key
+// and create a composite entity with (user, mint) if needed
+```
+
+### Immutability
+
+Use `SetOnce` for immutable data:
+
+```rust
+#[map(CreateIx::created_at, strategy = SetOnce)]
+pub created_at: i64,
+
+#[map(CreateIx::creator, strategy = SetOnce)]
+pub creator: String,
+```
+
+## Examples
+
+### Simple Token Entity
+
+```rust
+#[entity(name = "Token")]
+#[derive(Stream)]
+pub struct Token {
+    #[map(CreateIx::mint, primary_key)]
+    pub mint: String,
+    
+    #[map(BondingCurve::virtual_sol_reserves)]
+    pub sol_reserves: u64,
+    
+    #[aggregate(from = BuyIx, field = amount, strategy = Sum)]
+    pub total_volume: u64,
+}
+```
+
+### User Trading Profile
+
+```rust
+#[entity(name = "UserProfile")]
+#[derive(Stream)]
+pub struct UserProfile {
+    #[map(TradeIx::user, primary_key)]
+    pub user: String,
+    
+    #[aggregate(from = TradeIx, strategy = Count)]
+    pub trade_count: u64,
+    
+    #[aggregate(from = TradeIx, field = amount, strategy = Sum)]
+    pub total_volume: u64,
+    
+    #[map(TradeIx::timestamp, strategy = LastWrite)]
+    pub last_trade_at: i64,
+    
+    #[event(from = TradeIx, strategy = Append)]
+    pub trades: Vec<TradeEvent>,
+}
+```
+
+### Complex Entity with Sections
+
+```rust
+#[entity(name = "Token")]
+#[derive(Stream)]
+pub struct Token {
+    pub id: TokenId,
+    pub metadata: TokenMetadata,
+    pub reserves: TokenReserves,
+    pub trading: TradingMetrics,
+    pub history: TokenHistory,
+}
+
+pub struct TokenId {
+    #[map(CreateIx::mint, primary_key)]
+    pub mint: String,
+    
+    #[map(BondingCurve::mint, lookup_index)]
+    pub mint_lookup: String,
+}
+
+pub struct TokenMetadata {
+    #[resolve(Token, strategy = SetOnce, extracts = [
+        (target = "name", source = "name"),
+        (target = "symbol", source = "symbol"),
+    ])]
+    pub name: Option<String>,
+    pub symbol: Option<String>,
+}
+
+pub struct TokenReserves {
+    #[map(BondingCurve::virtual_sol_reserves)]
+    pub sol: u64,
+    
+    #[map(BondingCurve::virtual_token_reserves)]
+    pub token: u64,
+    
+    #[computed(sol / token)]
+    pub price: Option<f64>,
+}
+
+pub struct TradingMetrics {
+    #[aggregate(from = BuyIx, field = sol_amount, strategy = Sum)]
+    #[aggregate(from = SellIx, field = sol_amount, strategy = Sum)]
+    pub total_volume: u64,
+    
+    #[aggregate(from = BuyIx, strategy = Count)]
+    #[aggregate(from = SellIx, strategy = Count)]
+    pub trade_count: u64,
+}
+
+pub struct TokenHistory {
+    #[event(from = BuyIx, strategy = Append)]
+    #[event(from = SellIx, strategy = Append)]
+    pub trades: Vec<TradeEvent>,
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Mappings" icon="arrows-left-right" href="/concepts/mappings">
+    Learn about field mapping types
+  </Card>
+  <Card title="Streams" icon="water" href="/concepts/streams">
+    Understand stream definitions
+  </Card>
+  <Card title="Population Strategies" icon="arrows-rotate" href="/concepts/mappings#population-strategies">
+    Control how fields update
+  </Card>
+  <Card title="Computed Fields" icon="calculator" href="/concepts/mappings#computed-fields">
+    Derive values from fields
+  </Card>
+</CardGroup>

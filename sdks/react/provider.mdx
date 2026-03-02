@@ -1,0 +1,170 @@
+---
+title: "HyperstackProvider"
+description: "Configure the React SDK provider for managing Hyperstack connections"
+---
+
+## Overview
+
+The `HyperstackProvider` is the root component that manages WebSocket connections and provides context to all Hyperstack hooks in your React application.
+
+## Setup
+
+Wrap your application with `HyperstackProvider`:
+
+```tsx
+import { HyperstackProvider } from 'hyperstack-react';
+
+function App() {
+  return (
+    <HyperstackProvider autoConnect={true}>
+      <YourApp />
+    </HyperstackProvider>
+  );
+}
+```
+
+## Props
+
+<ParamField path="autoConnect" type="boolean" default="false">
+  Automatically connect to the stack when hooks are mounted
+</ParamField>
+
+<ParamField path="wallet" type="WalletAdapter">
+  Wallet adapter for signing transactions (optional)
+</ParamField>
+
+<ParamField path="reconnectIntervals" type="number[]">
+  Array of milliseconds to wait between reconnection attempts
+  
+  ```tsx
+  <HyperstackProvider reconnectIntervals={[1000, 2000, 5000]} />
+  ```
+</ParamField>
+
+<ParamField path="maxReconnectAttempts" type="number">
+  Maximum number of reconnection attempts before giving up
+</ParamField>
+
+<ParamField path="maxEntriesPerView" type="number | null">
+  Maximum number of entities to keep in memory per view. When exceeded, oldest entries are evicted.
+</ParamField>
+
+<ParamField path="flushIntervalMs" type="number" default="16">
+  Interval in milliseconds for batching storage updates (16ms = 60fps)
+</ParamField>
+
+<ParamField path="fallback" type="ReactNode">
+  Optional fallback UI to show while connecting (not commonly used)
+</ParamField>
+
+## Configuration Example
+
+```tsx
+import { HyperstackProvider } from 'hyperstack-react';
+
+function App() {
+  return (
+    <HyperstackProvider
+      autoConnect={true}
+      reconnectIntervals={[1000, 2000, 5000, 10000]}
+      maxReconnectAttempts={5}
+      maxEntriesPerView={1000}
+      flushIntervalMs={16}
+    >
+      <Dashboard />
+    </HyperstackProvider>
+  );
+}
+```
+
+## URL Configuration
+
+<Note>
+  The WebSocket URL is **not** configured in the provider. Instead:
+  1. The URL is embedded in your stack definition (`stack.url`)
+  2. You can override it per-hook using `useHyperstack(stack, { url: 'ws://localhost:3000' })`
+</Note>
+
+## Context Hooks
+
+These low-level hooks are available but rarely needed:
+
+### useHyperstackContext
+
+Access the internal Hyperstack context:
+
+```tsx
+import { useHyperstackContext } from 'hyperstack-react';
+
+function MyComponent() {
+  const { getClient, config } = useHyperstackContext();
+  // ...
+}
+```
+
+### useConnectionState
+
+Monitor connection state for a specific stack:
+
+```tsx
+import { useConnectionState } from 'hyperstack-react';
+import { MY_STACK } from './stack';
+
+function ConnectionStatus() {
+  const state = useConnectionState(MY_STACK);
+  // state: 'connected' | 'connecting' | 'disconnected' | 'error'
+  
+  return <div>Status: {state}</div>;
+}
+```
+
+### useView (Low-level)
+
+Direct view access without schema validation:
+
+```tsx
+import { useView } from 'hyperstack-react';
+import { MY_STACK } from './stack';
+
+function MyComponent() {
+  const items = useView<MyType>(MY_STACK, 'view_path');
+  // Returns raw array, no loading state
+}
+```
+
+### useEntity (Low-level)
+
+Direct entity access by key:
+
+```tsx
+import { useEntity } from 'hyperstack-react';
+import { MY_STACK } from './stack';
+
+function MyComponent() {
+  const entity = useEntity<MyType>(MY_STACK, 'view_path', 'entity_key');
+  // Returns single entity or null
+}
+```
+
+<Warning>
+  Prefer using `useHyperstack()` with typed view hooks instead of these low-level primitives.
+</Warning>
+
+## Storage Architecture
+
+The provider uses a Zustand-based storage adapter that:
+- Provides reactive updates to all subscribed components
+- Batches updates based on `flushIntervalMs` for performance
+- Manages connection state globally
+- Handles automatic cache eviction when `maxEntriesPerView` is set
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="React Hooks" icon="react" href="./hooks">
+    Learn about useHyperstack and view hooks
+  </Card>
+  <Card title="Mutations" icon="pen-to-square" href="./mutations">
+    Execute instructions with useInstructionMutation
+  </Card>
+</CardGroup>

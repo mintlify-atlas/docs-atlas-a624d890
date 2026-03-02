@@ -1,0 +1,367 @@
+---
+title: "Mutations"
+description: "Execute Solana instructions with the useInstructionMutation hook"
+---
+
+## Overview
+
+Mutations allow you to execute Solana instructions through your Hyperstack. The React SDK provides the `useInstructionMutation` hook for managing instruction execution state.
+
+## useInstructionMutation
+
+A hook for executing instructions with built-in loading, error, and success states.
+
+### Signature
+
+```tsx
+function useInstructionMutation(
+  execute: InstructionExecutor
+): UseMutationResult
+```
+
+### Parameters
+
+<ParamField path="execute" type="InstructionExecutor" required>
+  The instruction executor function from your stack client
+</ParamField>
+
+### Return Value
+
+<ResponseField name="submit" type="(args: Record<string, unknown>, options?: UseMutationOptions) => Promise<ExecutionResult>">
+  Function to execute the instruction with the given arguments
+</ResponseField>
+
+<ResponseField name="status" type="MutationStatus">
+  Current mutation status: `'idle'` | `'pending'` | `'success'` | `'error'`
+</ResponseField>
+
+<ResponseField name="error" type="string | null">
+  Error message if execution failed (includes parsed program errors)
+</ResponseField>
+
+<ResponseField name="signature" type="string | null">
+  Transaction signature if execution succeeded
+</ResponseField>
+
+<ResponseField name="isLoading" type="boolean">
+  Convenience boolean for `status === 'pending'`
+</ResponseField>
+
+<ResponseField name="reset" type="() => void">
+  Reset mutation state back to idle
+</ResponseField>
+
+## Basic Usage
+
+Access instruction mutations through `useHyperstack`:
+
+```tsx
+import { useHyperstack } from 'hyperstack-react';
+import { MY_STACK } from './stack';
+
+function MyComponent() {
+  const { instructions } = useHyperstack(MY_STACK);
+  const mutation = instructions.myInstruction.useMutation();
+  
+  const handleSubmit = async () => {
+    try {
+      const result = await mutation.submit({
+        amount: 100,
+        recipient: 'ABC123...'
+      });
+      
+      console.log('Transaction signature:', result.signature);
+    } catch (error) {
+      console.error('Transaction failed:', error);
+    }
+  };
+  
+  return (
+    <div>
+      <button 
+        onClick={handleSubmit}
+        disabled={mutation.isLoading}
+      >
+        {mutation.isLoading ? 'Processing...' : 'Submit'}
+      </button>
+      
+      {mutation.error && (
+        <div className="error">{mutation.error}</div>
+      )}
+      
+      {mutation.signature && (
+        <div className="success">
+          Success! Signature: {mutation.signature}
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+## Submit Options
+
+The `submit` function accepts optional execution options:
+
+```tsx
+interface UseMutationOptions {
+  confirmationLevel?: 'processed' | 'confirmed' | 'finalized';
+  onSuccess?: (result: ExecutionResult) => void;
+  onError?: (error: Error) => void;
+}
+```
+
+### Example with Callbacks
+
+```tsx
+function TransferForm() {
+  const { instructions } = useHyperstack(MY_STACK);
+  const mutation = instructions.transfer.useMutation();
+  
+  const handleTransfer = () => {
+    mutation.submit(
+      { amount: 100 },
+      {
+        confirmationLevel: 'confirmed',
+        onSuccess: (result) => {
+          console.log('Transfer confirmed:', result.signature);
+          // Refresh relevant views or show notification
+        },
+        onError: (error) => {
+          console.error('Transfer failed:', error);
+          // Show error notification
+        }
+      }
+    );
+  };
+  
+  return <button onClick={handleTransfer}>Transfer</button>;
+}
+```
+
+## Error Handling
+
+The hook automatically parses Solana program errors:
+
+```tsx
+function ErrorExample() {
+  const { instructions } = useHyperstack(MY_STACK);
+  const mutation = instructions.myInstruction.useMutation();
+  
+  // mutation.error will contain parsed error like:
+  // "InsufficientFunds: Not enough tokens in account"
+  
+  return (
+    <div>
+      {mutation.error && (
+        <Alert type="error">
+          <h4>Transaction Failed</h4>
+          <p>{mutation.error}</p>
+        </Alert>
+      )}
+    </div>
+  );
+}
+```
+
+## Status States
+
+Render different UI based on mutation status:
+
+```tsx
+function StatusExample() {
+  const mutation = instructions.myInstruction.useMutation();
+  
+  return (
+    <div>
+      {mutation.status === 'idle' && (
+        <button onClick={() => mutation.submit({ value: 42 })}>
+          Submit
+        </button>
+      )}
+      
+      {mutation.status === 'pending' && (
+        <div>
+          <Spinner />
+          <p>Processing transaction...</p>
+        </div>
+      )}
+      
+      {mutation.status === 'success' && (
+        <div>
+          <CheckIcon />
+          <p>Transaction successful!</p>
+          <a href={`https://explorer.solana.com/tx/${mutation.signature}`}>
+            View on Explorer
+          </a>
+        </div>
+      )}
+      
+      {mutation.status === 'error' && (
+        <div>
+          <ErrorIcon />
+          <p>{mutation.error}</p>
+          <button onClick={mutation.reset}>Try Again</button>
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+## Resetting State
+
+Use `reset()` to clear mutation state:
+
+```tsx
+function ResetExample() {
+  const mutation = instructions.myInstruction.useMutation();
+  
+  useEffect(() => {
+    // Reset when component unmounts or user navigates away
+    return () => mutation.reset();
+  }, []);
+  
+  return (
+    <div>
+      <button onClick={() => mutation.submit({ value: 1 })}>
+        Submit
+      </button>
+      
+      {mutation.status !== 'idle' && (
+        <button onClick={mutation.reset}>Reset</button>
+      )}
+    </div>
+  );
+}
+```
+
+## Direct Execution
+
+You can also execute instructions directly without using the mutation hook:
+
+```tsx
+function DirectExecution() {
+  const { instructions } = useHyperstack(MY_STACK);
+  const [loading, setLoading] = useState(false);
+  
+  const handleExecute = async () => {
+    setLoading(true);
+    
+    try {
+      const result = await instructions.myInstruction.execute({
+        value: 42
+      });
+      
+      console.log('Signature:', result.signature);
+    } catch (error) {
+      console.error('Error:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  return (
+    <button onClick={handleExecute} disabled={loading}>
+      Execute
+    </button>
+  );
+}
+```
+
+<Note>
+  The `useMutation()` hook is recommended over direct execution for better state management and error handling.
+</Note>
+
+## Form Integration
+
+Combine with form libraries like React Hook Form:
+
+```tsx
+import { useForm } from 'react-hook-form';
+
+interface FormData {
+  amount: number;
+  recipient: string;
+}
+
+function TransferForm() {
+  const { instructions } = useHyperstack(MY_STACK);
+  const mutation = instructions.transfer.useMutation();
+  const { register, handleSubmit } = useForm<FormData>();
+  
+  const onSubmit = async (data: FormData) => {
+    try {
+      await mutation.submit(data);
+    } catch (error) {
+      // Error is stored in mutation.error
+    }
+  };
+  
+  return (
+    <form onSubmit={handleSubmit(onSubmit)}>
+      <input 
+        type="number" 
+        {...register('amount', { required: true })} 
+      />
+      <input 
+        type="text" 
+        {...register('recipient', { required: true })} 
+      />
+      
+      <button type="submit" disabled={mutation.isLoading}>
+        {mutation.isLoading ? 'Sending...' : 'Send'}
+      </button>
+      
+      {mutation.error && <div className="error">{mutation.error}</div>}
+      {mutation.signature && <div className="success">Sent!</div>}
+    </form>
+  );
+}
+```
+
+## Optimistic Updates
+
+Update UI optimistically before confirmation:
+
+```tsx
+function OptimisticExample() {
+  const { views, instructions } = useHyperstack(MY_STACK);
+  const { data: count } = views.Counter.current.use();
+  const mutation = instructions.increment.useMutation();
+  const [optimisticCount, setOptimisticCount] = useState<number | null>(null);
+  
+  const handleIncrement = async () => {
+    // Optimistically update UI
+    setOptimisticCount((count?.value ?? 0) + 1);
+    
+    try {
+      await mutation.submit({});
+      // Real data will arrive via WebSocket
+    } catch (error) {
+      // Revert optimistic update on error
+      setOptimisticCount(null);
+    }
+  };
+  
+  const displayCount = optimisticCount ?? count?.value ?? 0;
+  
+  return (
+    <div>
+      <p>Count: {displayCount}</p>
+      <button onClick={handleIncrement}>Increment</button>
+    </div>
+  );
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Examples" icon="code" href="./examples">
+    See complete working examples
+  </Card>
+  <Card title="Core SDK" icon="cube" href="../../core/instructions">
+    Learn about instruction definitions
+  </Card>
+</CardGroup>

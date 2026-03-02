@@ -1,0 +1,507 @@
+---
+title: System Architecture
+description: Deep dive into Hyperstack's core components and data processing pipeline
+---
+
+Hyperstack's architecture is designed for real-time, stateful stream processing of Solana blockchain data. This page explains how the system works under the hood.
+
+## Architecture Diagram
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                        SPECIFICATION LAYER                       │
+│                                                                  │
+│  ┌────────────────┐      ┌──────────────────┐                   │
+│  │  Rust Macros   │  →   │  AST Generator   │                   │
+│  │  #[hyperstack] │      │  (proc macros)   │                   │
+│  └────────────────┘      └──────────────────┘                   │
+│                                 ↓                                │
+│                    ┌────────────────────────┐                    │
+│                    │ SerializableStreamSpec │                    │
+│                    │  (.stack.json)         │                    │
+│                    └────────────────────────┘                    │
+└──────────────────────────────────────────────────────────────────┘
+                                 ↓
+┌──────────────────────────────────────────────────────────────────┐
+│                         COMPILATION LAYER                        │
+│                                                                  │
+│  ┌────────────────┐      ┌──────────────────┐                   │
+│  │   AST Parser   │  →   │ Bytecode Compiler│                   │
+│  │                │      │ (OpCode gen)     │                   │
+│  └────────────────┘      └──────────────────┘                   │
+│                                 ↓                                │
+│                    ┌────────────────────────┐                    │
+│                    │ MultiEntityBytecode    │                    │
+│                    │ - Handlers             │                    │
+│                    │ - OpCode sequences     │                    │
+│                    │ - Event routing        │                    │
+│                    └────────────────────────┘                    │
+└──────────────────────────────────────────────────────────────────┘
+                                 ↓
+┌──────────────────────────────────────────────────────────────────┐
+│                          RUNTIME LAYER                           │
+│                                                                  │
+│  ┌────────────────────────────────────────────────────────────┐  │
+│  │                      VmContext                             │  │
+│  │                                                            │  │
+│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │  │
+│  │  │ State Tables │  │   Indexes    │  │  Resolvers   │     │  │
+│  │  │ - Entities   │  │ - Lookup     │  │ - Token      │     │  │
+│  │  │ - LRU cache  │  │ - Temporal   │  │ - URL        │     │  │
+│  │  │              │  │ - PDA        │  │              │     │  │
+│  │  └──────────────┘  └──────────────┘  └──────────────┘     │  │
+│  │                                                            │  │
+│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │  │
+│  │  │   Registers  │  │ Path Cache   │  │ Dirty Track  │     │  │
+│  │  │  (256 slots) │  │              │  │              │     │  │
+│  │  └──────────────┘  └──────────────┘  └──────────────┘     │  │
+│  └────────────────────────────────────────────────────────────┘  │
+│                                 ↑                                │
+│                    ┌────────────────────────┐                    │
+│                    │  Yellowstone gRPC      │                    │
+│                    │  (Account/Instruction) │                    │
+│                    └────────────────────────┘                    │
+└──────────────────────────────────────────────────────────────────┘
+                                 ↓
+┌──────────────────────────────────────────────────────────────────┐
+│                        STREAMING LAYER                           │
+│                                                                  │
+│  ┌────────────────┐      ┌──────────────────┐                   │
+│  │  BusManager    │  →   │  WebSocket       │  →  Clients       │
+│  │  (mutations)   │      │  (view streams)  │                   │
+│  └────────────────┘      └──────────────────┘                   │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+## Core Components
+
+### 1. AST (Abstract Syntax Tree)
+
+The AST is a language-agnostic representation of your stream specification:
+
+**Structure:**
+```rust
+pub struct SerializableStreamSpec {
+    pub state_name: String,           // Entity name
+    pub program_id: Option<String>,   // Solana program
+    pub idl: Option<IdlSnapshot>,     // Embedded IDL
+    pub identity: IdentitySpec,       // Primary key config
+    pub handlers: Vec<HandlerSpec>,   // Event handlers
+    pub sections: Vec<EntitySection>, // Field groupings
+    pub field_mappings: BTreeMap<String, FieldTypeInfo>,
+    pub resolver_specs: Vec<ResolverSpec>,
+    pub computed_field_specs: Vec<ComputedFieldSpec>,
+    pub content_hash: Option<String>, // SHA256 for deduplication
+}
+```
+
+**Key Features:**
+- **Type Information**: Complete field types for SDK generation
+- **Handler Specs**: Source, key resolution, mappings per event type
+- **Entity Sections**: Logical groupings (like Rust structs)
+- **Deterministic**: Same spec always produces same hash
+
+### 2. Bytecode Compiler
+
+The compiler transforms AST into executable bytecode:
+
+**OpCode Types:**
+```rust
+pub enum OpCode {
+    LoadEventField { path, dest, default },
+    LoadConstant { value, dest },
+    SetField { object, path, value },
+    SetFieldIfNull { object, path, value },
+    SetFieldSum { object, path, value },      // Sum strategy
+    SetFieldIncrement { object, path },       // Count strategy
+    SetFieldMax/Min { object, path, value },  // Max/Min strategy
+    AppendToArray { object, path, value },    // Append strategy
+    ReadOrInitState { state_id, key, dest },
+    UpdateState { state_id, key, value },
+    LookupIndex { state_id, index_name, lookup_value, dest },
+    UpdateLookupIndex { state_id, index_name, lookup_value, primary_key },
+    QueueResolver { state_id, resolver, input, extracts },
+    EvaluateComputedFields { state, computed_paths },
+    EmitMutation { entity_name, key, state },
+}
+```
+
+**Compilation Process:**
+1. Parse AST handlers
+2. Generate key resolution opcodes
+3. Generate field mapping opcodes (based on strategy)
+4. Generate index update opcodes
+5. Generate computed field evaluation
+6. Generate mutation emission
+
+### 3. Virtual Machine (VM)
+
+The VM executes bytecode to process blockchain events.
+
+#### VmContext
+
+The main execution context:
+
+```rust
+pub struct VmContext {
+    registers: Vec<Value>,                    // 256 register slots
+    states: HashMap<u32, StateTable>,         // Entity storage
+    path_cache: HashMap<String, CompiledPath>, // Path compilation cache
+    resolver_cache: LruCache<String, Value>,   // Resolver results
+    resolver_pending: HashMap<String, PendingResolverEntry>,
+    current_context: Option<UpdateContext>,    // Slot, signature, timestamp
+    warnings: Vec<String>,
+}
+```
+
+**Registers**: Temporary storage during bytecode execution (like CPU registers)
+
+**Update Context**: Metadata about the current blockchain event:
+```rust
+pub struct UpdateContext {
+    pub slot: Option<u64>,              // Blockchain slot
+    pub signature: Option<String>,      // Transaction signature
+    pub timestamp: Option<i64>,         // Unix timestamp
+    pub write_version: Option<u64>,     // For account staleness detection
+    pub txn_index: Option<u64>,         // For instruction deduplication
+}
+```
+
+#### StateTable
+
+Entity storage with LRU eviction:
+
+```rust
+pub struct StateTable {
+    data: DashMap<Value, Value>,              // key → entity state
+    access_times: DashMap<Value, i64>,        // LRU tracking
+    lookup_indexes: HashMap<String, LookupIndex>,
+    temporal_indexes: HashMap<String, TemporalIndex>,
+    pda_reverse_lookups: HashMap<String, PdaReverseLookup>,
+    pending_updates: DashMap<String, Vec<PendingAccountUpdate>>,
+    version_tracker: VersionTracker,          // Staleness detection
+    config: StateTableConfig,
+}
+```
+
+**Configuration:**
+```rust
+pub struct StateTableConfig {
+    pub max_entries: usize,      // Default: 2,500
+    pub max_array_length: usize, // Default: 100
+}
+```
+
+**Eviction Policy**: When at capacity, evicts least-recently-used entities.
+
+#### Indexes
+
+**Lookup Index**: Fast key resolution for cross-entity references
+```rust
+pub struct LookupIndex {
+    index: Mutex<LruCache<String, Value>>,  // lookup_value → primary_key
+}
+```
+
+Example:
+```rust
+// Register mapping: bonding_curve → mint
+index.insert(bonding_curve_address, mint_address);
+
+// Later, resolve mint from curve
+let mint = index.lookup(bonding_curve_address)?;
+```
+
+**Temporal Index**: Time-based entity lookups
+```rust
+pub struct TemporalIndex {
+    index: Mutex<LruCache<String, Vec<(Value, i64)>>>,
+    // lookup_key → [(primary_key, timestamp), ...]
+}
+```
+
+Example:
+```rust
+// Round IDs change over time
+index.insert("current_round", round_id_1, timestamp_1);
+index.insert("current_round", round_id_2, timestamp_2);
+
+// Lookup round active at specific time
+let round = index.lookup("current_round", timestamp)?;
+```
+
+**PDA Reverse Lookup**: Map PDAs back to seeds
+```rust
+pub struct PdaReverseLookup {
+    index: LruCache<String, String>,  // pda_address → seed_value
+}
+```
+
+Used when PDA is encountered before the instruction that creates it.
+
+### 4. Event Processing Pipeline
+
+#### Step 1: Event Ingestion
+
+```
+Yellowstone gRPC → process_event(event_value, event_type, context)
+```
+
+**Event Types:**
+- Account updates: `BondingCurve`, `Metadata`, etc.
+- Instructions: `CreateIx`, `BuyIx`, `SellIx`, etc.
+
+#### Step 2: Handler Routing
+
+```rust
+if let Some(entity_names) = bytecode.event_routing.get(event_type) {
+    for entity_name in entity_names {
+        if let Some(handler) = entity_bytecode.handlers.get(event_type) {
+            execute_handler(handler, event_value, ...);
+        }
+    }
+}
+```
+
+#### Step 3: Handler Execution
+
+**Bytecode Execution Loop:**
+```rust
+for opcode in &handler.opcodes {
+    match opcode {
+        LoadEventField { path, dest, .. } => {
+            registers[dest] = get_value_at_path(&event, path);
+        }
+        SetField { object, path, value } => {
+            set_nested_field(&mut registers[object], path, registers[value]);
+            dirty_tracker.mark_replaced(path);
+        }
+        SetFieldSum { object, path, value } => {
+            let current = get_field(&registers[object], path).unwrap_or(0);
+            set_field(&mut registers[object], path, current + registers[value]);
+            dirty_tracker.mark_replaced(path);
+        }
+        // ... more opcodes
+    }
+}
+```
+
+**Dirty Tracking**: Captures which fields changed
+```rust
+pub enum FieldChange {
+    Replaced,              // Full field value
+    Appended(Vec<Value>),  // Only new items
+}
+```
+
+#### Step 4: State Persistence
+
+```rust
+state.insert_with_eviction(primary_key, entity_state);
+```
+
+**Staleness Detection:**
+- Account updates compared by `(slot, write_version)`
+- Instruction updates deduplicated by `(slot, txn_index)`
+- Stale updates rejected silently
+
+#### Step 5: Mutation Emission
+
+```rust
+let patch = extract_partial_state_with_tracker(state_reg, &dirty_tracker)?;
+
+Mutation {
+    export: entity_name,
+    key: primary_key,
+    patch,  // Only changed fields
+    append: appended_paths,  // Paths with Append strategy
+}
+```
+
+### 5. Resolvers
+
+Resolvers enrich entities with external data:
+
+**Token Resolver**: Fetches token metadata
+```rust
+pub struct ResolverSpec {
+    pub resolver: ResolverType::Token,
+    pub input_path: Some("mint"),
+    pub strategy: SetOnce,
+    pub extracts: vec![
+        ResolverExtractSpec {
+            target_path: "metadata.name",
+            source_path: Some("name"),
+        },
+        ResolverExtractSpec {
+            target_path: "metadata.symbol",
+            source_path: Some("symbol"),
+        },
+    ],
+}
+```
+
+**URL Resolver**: Fetches arbitrary JSON
+```rust
+pub struct ResolverSpec {
+    pub resolver: ResolverType::Url(UrlResolverConfig {
+        url_path: "info.uri",
+        method: HttpMethod::Get,
+        extract_path: None,  // Full response
+    }),
+    pub extracts: vec![
+        ResolverExtractSpec {
+            target_path: "metadata.image",
+            source_path: Some("image"),
+        },
+    ],
+}
+```
+
+**Async Execution:**
+1. Handler encounters `QueueResolver` opcode
+2. Resolver request queued
+3. Handler continues (non-blocking)
+4. External system resolves and calls `apply_resolver_result`
+5. VM applies extractions and emits mutation
+
+### 6. Computed Fields
+
+Computed fields are derived from other fields:
+
+```rust
+pub struct ComputedFieldSpec {
+    pub target_path: String,
+    pub expression: ComputedExpr,
+    pub result_type: String,
+}
+
+pub enum ComputedExpr {
+    FieldRef { path: String },
+    Binary { op: BinaryOp, left, right },
+    UnwrapOr { expr, default },
+    Cast { expr, to_type },
+    MethodCall { expr, method, args },
+    Literal { value },
+    // ... many more
+}
+```
+
+**Example:**
+```rust
+// price = sol_reserves / token_reserves
+ComputedFieldSpec {
+    target_path: "price",
+    expression: Binary {
+        op: Div,
+        left: FieldRef { path: "sol_reserves" },
+        right: FieldRef { path: "token_reserves" },
+    },
+    result_type: "Option<f64>",
+}
+```
+
+**Evaluation**: Computed fields are evaluated after mappings apply, and dirty-tracked like regular fields.
+
+### 7. Streaming Layer
+
+The streaming layer delivers mutations to clients:
+
+**BusManager**: Pub/sub for mutations
+```rust
+pub struct BusManager {
+    channels: DashMap<String, Vec<Sender<Mutation>>>,
+}
+```
+
+**WebSocket Protocol**:
+```json
+// Client subscribes
+{ "type": "subscribe", "view": "Token/list" }
+
+// Server sends snapshot
+{ "type": "snapshot", "view": "Token/list", "data": [...] }
+
+// Server sends delta
+{
+  "type": "mutation",
+  "export": "Token",
+  "key": "mint_address",
+  "patch": { "sol_reserves": 1000 },
+  "append": ["trades"]
+}
+```
+
+## Performance Optimizations
+
+### Path Compilation
+
+Field paths are compiled once and cached:
+```rust
+pub struct CompiledPath {
+    pub segments: Arc<[String]>,
+}
+
+fn get_compiled_path(&mut self, path: &str) -> CompiledPath {
+    if let Some(compiled) = self.path_cache.get(path) {
+        return compiled.clone();  // Cache hit
+    }
+    let compiled = CompiledPath::new(path);
+    self.path_cache.insert(path.to_string(), compiled.clone());
+    compiled
+}
+```
+
+### Delta Transmission
+
+Only changed fields are transmitted:
+- **Replaced fields**: Send current value
+- **Appended fields**: Send only new items
+
+This minimizes bandwidth for high-frequency updates.
+
+### LRU Caching
+
+All caches use LRU eviction:
+- State tables (entities)
+- Lookup indexes
+- Temporal indexes
+- PDA reverse lookups
+- Resolver results
+- Path compilations
+
+This bounds memory usage while keeping hot data accessible.
+
+## Capacity Management
+
+**Default Limits:**
+```rust
+const DEFAULT_MAX_STATE_TABLE_ENTRIES: usize = 2_500;
+const DEFAULT_MAX_LOOKUP_INDEX_ENTRIES: usize = 2_500;
+const DEFAULT_MAX_TEMPORAL_INDEX_KEYS: usize = 2_500;
+const MAX_TEMPORAL_ENTRIES_PER_KEY: usize = 250;
+const DEFAULT_MAX_PDA_REVERSE_LOOKUP_ENTRIES: usize = 2_500;
+const DEFAULT_MAX_RESOLVER_CACHE_ENTRIES: usize = 5_000;
+const MAX_PENDING_UPDATES_TOTAL: usize = 2_500;
+const MAX_PENDING_UPDATES_PER_PDA: usize = 50;
+const PENDING_UPDATE_TTL_SECONDS: i64 = 300;  // 5 minutes
+```
+
+**Capacity Warnings**: VM tracks when tables approach limits and emits warnings.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Entities" icon="cube" href="/concepts/entities">
+    Understand entity structure
+  </Card>
+  <Card title="Mappings" icon="arrows-left-right" href="/concepts/mappings">
+    Field mapping strategies
+  </Card>
+  <Card title="Streams" icon="water" href="/concepts/streams">
+    Stream lifecycle
+  </Card>
+  <Card title="Stacks" icon="layer-group" href="/concepts/stacks">
+    Client-side API
+  </Card>
+</CardGroup>

@@ -1,0 +1,430 @@
+---
+title: React Types
+description: TypeScript type definitions for HyperStack React hooks
+---
+
+Type definitions for React hooks and components in the HyperStack React library.
+
+## Hook Result Types
+
+<ResponseField name="ViewHookResult" type="interface">
+  Result type for view hooks
+  
+  ```typescript
+  interface ViewHookResult<T> {
+    data: T | undefined;
+    isLoading: boolean;
+    error: Error | undefined;
+    refresh: () => void;
+  }
+  ```
+  
+  <ParamField path="data" type="T | undefined">
+    Entity data (undefined while loading or if not found)
+  </ParamField>
+  
+  <ParamField path="isLoading" type="boolean">
+    True while initial data is loading
+  </ParamField>
+  
+  <ParamField path="error" type="Error | undefined">
+    Error if the subscription failed
+  </ParamField>
+  
+  <ParamField path="refresh" type="() => void">
+    Manually trigger a data refresh
+  </ParamField>
+</ResponseField>
+
+<ResponseField name="UseMutationResult" type="interface">
+  Result type for mutation hooks
+  
+  ```typescript
+  interface UseMutationResult<TArgs, TResult> {
+    mutate: (args: TArgs) => void;
+    mutateAsync: (args: TArgs) => Promise<TResult>;
+    status: MutationStatus;
+    data: TResult | undefined;
+    error: Error | undefined;
+    isPending: boolean;
+    isSuccess: boolean;
+    isError: boolean;
+    reset: () => void;
+  }
+  ```
+  
+  <ParamField path="mutate" type="(args: TArgs) => void">
+    Execute the mutation (fire-and-forget)
+  </ParamField>
+  
+  <ParamField path="mutateAsync" type="async (args: TArgs) => Promise<TResult>">
+    Execute the mutation and await result
+  </ParamField>
+  
+  <ParamField path="status" type="MutationStatus">
+    Current status: `'idle' | 'pending' | 'success' | 'error'`
+  </ParamField>
+  
+  <ParamField path="data" type="TResult | undefined">
+    Result data (available after success)
+  </ParamField>
+  
+  <ParamField path="error" type="Error | undefined">
+    Error (available after failure)
+  </ParamField>
+  
+  <ParamField path="isPending" type="boolean">
+    True while mutation is executing
+  </ParamField>
+  
+  <ParamField path="isSuccess" type="boolean">
+    True if mutation succeeded
+  </ParamField>
+  
+  <ParamField path="isError" type="boolean">
+    True if mutation failed
+  </ParamField>
+  
+  <ParamField path="reset" type="() => void">
+    Reset mutation state to idle
+  </ParamField>
+</ResponseField>
+
+<ResponseField name="UseMutationReturn" type="type">
+  Alias for `UseMutationResult`
+  
+  ```typescript
+  type UseMutationReturn<TArgs, TResult> = UseMutationResult<TArgs, TResult>;
+  ```
+</ResponseField>
+
+## Hook Options Types
+
+<ResponseField name="ViewHookOptions" type="interface">
+  Options for view hooks
+  
+  ```typescript
+  interface ViewHookOptions {
+    enabled?: boolean;
+    initialData?: unknown;
+    schema?: Schema<unknown>;
+  }
+  ```
+  
+  <ParamField path="enabled" type="boolean" default="true">
+    Enable/disable the subscription. When false, data won't be fetched.
+  </ParamField>
+  
+  <ParamField path="initialData" type="T">
+    Initial data to use before first load completes
+  </ParamField>
+  
+  <ParamField path="schema" type="Schema<T>">
+    Validation schema (e.g., Zod) for runtime type checking
+  </ParamField>
+  
+  ### Example
+  
+  ```tsx
+  import { z } from 'zod';
+  
+  const UserSchema = z.object({
+    id: z.string(),
+    name: z.string(),
+  });
+  
+  const { data } = views.users.state.use(
+    { id: userId },
+    {
+      enabled: !!userId, // Only fetch if userId exists
+      schema: UserSchema,
+      initialData: { id: userId, name: 'Loading...' },
+    }
+  );
+  ```
+</ResponseField>
+
+<ResponseField name="UseMutationOptions" type="interface">
+  Options for mutation hooks
+  
+  ```typescript
+  interface UseMutationOptions<TArgs, TResult> {
+    onSuccess?: (result: TResult, args: TArgs) => void;
+    onError?: (error: Error, args: TArgs) => void;
+    onSettled?: (
+      result: TResult | undefined,
+      error: Error | undefined,
+      args: TArgs
+    ) => void;
+  }
+  ```
+  
+  <ParamField path="onSuccess" type="function">
+    Called when mutation succeeds
+    - `result`: The mutation result
+    - `args`: The arguments passed to mutate
+  </ParamField>
+  
+  <ParamField path="onError" type="function">
+    Called when mutation fails
+    - `error`: The error that occurred
+    - `args`: The arguments passed to mutate
+  </ParamField>
+  
+  <ParamField path="onSettled" type="function">
+    Called when mutation completes (success or error)
+    - `result`: The result (undefined on error)
+    - `error`: The error (undefined on success)
+    - `args`: The arguments passed to mutate
+  </ParamField>
+  
+  ### Example
+  
+  ```tsx
+  const mutation = useInstructionMutation(instructions.transfer, {
+    onSuccess: (result, args) => {
+      console.log(`Transferred ${args.amount} to ${args.to}`);
+      console.log('Signature:', result.signature);
+    },
+    onError: (error, args) => {
+      console.error(`Failed to transfer ${args.amount}:`, error);
+    },
+    onSettled: (result, error, args) => {
+      console.log('Transfer completed or failed');
+    },
+  });
+  ```
+</ResponseField>
+
+<ResponseField name="UseHyperstackOptions" type="interface">
+  Options for useHyperstack hook
+  
+  ```typescript
+  interface UseHyperstackOptions {
+    urlOverride?: string;
+  }
+  ```
+  
+  <ParamField path="urlOverride" type="string">
+    Override the default WebSocket URL from stack definition
+  </ParamField>
+</ResponseField>
+
+## Configuration Types
+
+<ResponseField name="HyperstackConfig" type="interface">
+  Provider configuration
+  
+  ```typescript
+  interface HyperstackConfig {
+    autoConnect?: boolean;
+    reconnectIntervals?: number[];
+    maxReconnectAttempts?: number;
+    maxEntriesPerView?: number | null;
+    flushIntervalMs?: number;
+  }
+  ```
+  
+  See [Provider](/api/react/provider) for details.
+</ResponseField>
+
+## List Query Types
+
+<ResponseField name="ListParams" type="type">
+  Parameters for list queries
+  
+  ```typescript
+  type ListParams = ListParamsBase & (
+    | ListParamsSingle
+    | ListParamsMultiple
+  );
+  ```
+</ResponseField>
+
+<ResponseField name="ListParamsBase" type="interface">
+  Base parameters for list queries
+  
+  ```typescript
+  interface ListParamsBase {
+    filters?: Record<string, string>;
+    take?: number;
+    skip?: number;
+  }
+  ```
+  
+  <ParamField path="filters" type="Record<string, string>">
+    Filter entities by field values
+  </ParamField>
+  
+  <ParamField path="take" type="number">
+    Maximum number of results to return
+  </ParamField>
+  
+  <ParamField path="skip" type="number">
+    Number of results to skip (for pagination)
+  </ParamField>
+</ResponseField>
+
+<ResponseField name="ListParamsSingle" type="interface">
+  Single-key list parameters
+  
+  ```typescript
+  interface ListParamsSingle {
+    key: string;
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="ListParamsMultiple" type="interface">
+  Multi-key list parameters
+  
+  ```typescript
+  interface ListParamsMultiple {
+    keys: string[];
+  }
+  ```
+</ResponseField>
+
+## Hook Types
+
+<ResponseField name="StateViewHook" type="type">
+  Type for state view hooks
+  
+  ```typescript
+  type StateViewHook<T> = (
+    key: Record<string, string>,
+    options?: ViewHookOptions
+  ) => ViewHookResult<T>;
+  ```
+</ResponseField>
+
+<ResponseField name="ListViewHook" type="type">
+  Type for list view hooks
+  
+  ```typescript
+  type ListViewHook<T> = (
+    params?: ListParams,
+    options?: ViewHookOptions
+  ) => ViewHookResult<T[]>;
+  ```
+</ResponseField>
+
+## Status Types
+
+<ResponseField name="MutationStatus" type="type">
+  Mutation execution status
+  
+  ```typescript
+  type MutationStatus = 'idle' | 'pending' | 'success' | 'error';
+  ```
+  
+  <ParamField path="idle" type="string">
+    Mutation has not been executed yet
+  </ParamField>
+  
+  <ParamField path="pending" type="string">
+    Mutation is currently executing
+  </ParamField>
+  
+  <ParamField path="success" type="string">
+    Mutation completed successfully
+  </ParamField>
+  
+  <ParamField path="error" type="string">
+    Mutation failed with an error
+  </ParamField>
+</ResponseField>
+
+<ResponseField name="ViewMode" type="type">
+  View access mode
+  
+  ```typescript
+  type ViewMode = 'state' | 'list';
+  ```
+  
+  <ParamField path="state" type="string">
+    Single entity by key
+  </ParamField>
+  
+  <ParamField path="list" type="string">
+    Multiple entities
+  </ParamField>
+</ResponseField>
+
+## Re-exported Types
+
+All types from `hyperstack-typescript` are re-exported:
+
+```typescript
+import type {
+  ConnectionState,
+  Update,
+  RichUpdate,
+  StackDefinition,
+  ViewDef,
+  ViewGroup,
+  Schema,
+  // ... and more
+} from 'hyperstack-react';
+```
+
+See [TypeScript Types](/api/typescript/types) for full details.
+
+## Example Usage
+
+```tsx
+import type {
+  ViewHookResult,
+  UseMutationResult,
+  ViewHookOptions,
+  ListParams,
+} from 'hyperstack-react';
+
+// Custom hook with typed result
+function useCurrentUser(): ViewHookResult<User> {
+  const { views } = useHyperstack(MyStack);
+  return views.users.state.use({ id: 'current' });
+}
+
+// Component with mutation
+function TransferForm() {
+  const mutation: UseMutationResult<TransferArgs, TransferResult> =
+    useInstructionMutation(instructions.transfer);
+    
+  const handleSubmit = (args: TransferArgs) => {
+    mutation.mutate(args);
+  };
+  
+  return (
+    <form onSubmit={(e) => {
+      e.preventDefault();
+      handleSubmit({ to: '...', amount: 100 });
+    }}>
+      <button disabled={mutation.isPending}>
+        {mutation.isPending ? 'Sending...' : 'Send'}
+      </button>
+      {mutation.error && <div>{mutation.error.message}</div>}
+    </form>
+  );
+}
+
+// List with pagination
+function UserList() {
+  const [page, setPage] = React.useState(0);
+  const pageSize = 20;
+  
+  const params: ListParams = {
+    take: pageSize,
+    skip: page * pageSize,
+    filters: { status: 'active' },
+  };
+  
+  const options: ViewHookOptions = {
+    enabled: true,
+  };
+  
+  const result: ViewHookResult<User[]> = views.users.list.use(params, options);
+  
+  return <div>...</div>;
+}
+```

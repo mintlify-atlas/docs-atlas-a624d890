@@ -1,0 +1,450 @@
+---
+title: "Subscribing to Data"
+description: "Listen to real-time updates from your Hyperstack stream"
+---
+
+Subscriptions enable real-time data synchronization. Views automatically subscribe to updates when you start watching them.
+
+## Subscription Methods
+
+Hyperstack provides three ways to subscribe to data:
+
+### use() - Simple Data Stream
+
+Emits the full entity data after each update. Simplest API for most use cases.
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    // Subscribe to list view
+    for await (const tokens of client.views.tokens.list.use()) {
+      console.log('Current tokens:', tokens);
+      // tokens: Token[]
+    }
+
+    // Subscribe to state view
+    for await (const token of client.views.tokens.state.use('So11111...')) {
+      console.log('Token updated:', token);
+      // token: Token
+    }
+    ```
+  </Tab>
+
+  <Tab title="React">
+    ```tsx
+    import { useView, useEntity } from 'hyperstack-react';
+
+    function TokenList() {
+      // Auto-subscribes and re-renders on updates
+      const tokens = useView(MyStack, 'Token/list');
+
+      return (
+        <ul>
+          {tokens.map(t => <li key={t.mint}>{t.name}</li>)}
+        </ul>
+      );
+    }
+
+    function TokenDetail({ mint }: { mint: string }) {
+      // Auto-subscribes to single entity
+      const token = useEntity(MyStack, 'Token/state', mint);
+
+      if (!token) return <p>Loading...</p>;
+      return <p>{token.name}</p>;
+    }
+    ```
+  </Tab>
+
+  <Tab title="Rust">
+    ```rust
+    use futures_util::StreamExt;
+
+    // Subscribe to list view - emits full data
+    let mut stream = hs.views.tokens().list().listen();
+    while let Some(tokens) = stream.next().await {
+        println!("Current tokens: {:?}", tokens);
+        // tokens: Vec<Token>
+    }
+
+    // Subscribe to state view
+    let mut stream = hs.views.tokens().state().listen("So11111...");
+    while let Some(token) = stream.next().await {
+        println!("Token updated: {:?}", token);
+        // token: Token
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### watch() - Update Stream
+
+Emits update events (upsert, patch, delete). Use when you need to know the type of change.
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    // Watch list view
+    for await (const update of client.views.tokens.list.watch()) {
+      switch (update.type) {
+        case 'upsert':
+          console.log('Token added/updated:', update.data);
+          break;
+        case 'patch':
+          console.log('Token patched:', update.key, update.data);
+          break;
+        case 'delete':
+          console.log('Token deleted:', update.key);
+          break;
+      }
+    }
+
+    // Watch state view
+    for await (const update of client.views.tokens.state.watch('So11111...')) {
+      console.log('Update type:', update.type);
+    }
+    ```
+
+    Update types:
+    ```typescript
+    type Update<T> =
+      | { type: 'upsert'; key: string; data: T }
+      | { type: 'patch'; key: string; data: Partial<T> }
+      | { type: 'delete'; key: string };
+    ```
+  </Tab>
+
+  <Tab title="Rust">
+    ```rust
+    use futures_util::StreamExt;
+
+    // Watch list view
+    let mut stream = hs.views.tokens().list().watch();
+    while let Some(update) = stream.next().await {
+        match update {
+            Update::Upsert { key, data } => {
+                println!("Token added/updated: {} {:?}", key, data);
+            }
+            Update::Patch { key, patch } => {
+                println!("Token patched: {} {:?}", key, patch);
+            }
+            Update::Delete { key } => {
+                println!("Token deleted: {}", key);
+            }
+        }
+    }
+
+    // Watch state view
+    let mut stream = hs.views.tokens().state().watch("So11111...");
+    while let Some(update) = stream.next().await {
+        println!("Update: {:?}", update);
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### watchRich() - Rich Update Stream
+
+Emits before/after states. Use when you need to compare previous and current values.
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    for await (const update of client.views.tokens.list.watchRich()) {
+      switch (update.type) {
+        case 'created':
+          console.log('New token:', update.data);
+          break;
+        case 'updated':
+          console.log('Before:', update.before);
+          console.log('After:', update.after);
+          console.log('Changed fields:', update.patch);
+          break;
+        case 'deleted':
+          console.log('Deleted:', update.lastKnown);
+          break;
+      }
+    }
+    ```
+
+    Rich update types:
+    ```typescript
+    type RichUpdate<T> =
+      | { type: 'created'; key: string; data: T }
+      | { type: 'updated'; key: string; before: T; after: T; patch?: unknown }
+      | { type: 'deleted'; key: string; lastKnown?: T };
+    ```
+  </Tab>
+
+  <Tab title="Rust">
+    ```rust
+    use futures_util::StreamExt;
+
+    let mut stream = hs.views.tokens().list().watch_rich();
+    while let Some(update) = stream.next().await {
+        match update {
+            RichUpdate::Created { key, data } => {
+                println!("New token: {} {:?}", key, data);
+            }
+            RichUpdate::Updated { key, before, after, patch } => {
+                println!("Before: {:?}", before);
+                println!("After: {:?}", after);
+                println!("Patch: {:?}", patch);
+            }
+            RichUpdate::Deleted { key, last_known } => {
+                println!("Deleted: {} {:?}", key, last_known);
+            }
+        }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Subscription Options
+
+### Limiting Results
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    // Limit to top 10 tokens
+    for await (const tokens of client.views.tokens.list.use({ limit: 10 })) {
+      console.log('Top 10:', tokens);
+    }
+
+    // Skip first 10, take next 20
+    for await (const tokens of client.views.tokens.list.use({ 
+      skip: 10, 
+      limit: 20 
+    })) {
+      console.log('Page 2:', tokens);
+    }
+    ```
+  </Tab>
+
+  <Tab title="Rust">
+    ```rust
+    // Limit to top 10 tokens
+    let mut stream = hs.views.tokens().list().listen().take(10);
+    while let Some(tokens) = stream.next().await {
+        println!("Top 10: {:?}", tokens);
+    }
+
+    // Skip first 10, take next 20
+    let mut stream = hs.views.tokens().list().listen()
+        .skip(10)
+        .take(20);
+    ```
+  </Tab>
+</Tabs>
+
+### Server-Side Filters
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    // Filter by custom criteria
+    for await (const tokens of client.views.tokens.list.use({ 
+      filters: { 
+        min_volume: '10000',
+        verified: 'true'
+      }
+    })) {
+      console.log('Filtered tokens:', tokens);
+    }
+    ```
+
+    Filters are sent to the server and must be supported by your stream implementation.
+  </Tab>
+
+  <Tab title="Rust">
+    ```rust
+    // Chain multiple filters
+    let mut stream = hs.views.tokens().list().listen()
+        .filter("min_volume", "10000")
+        .filter("verified", "true")
+        .take(50);
+
+    while let Some(tokens) = stream.next().await {
+        println!("Filtered tokens: {:?}", tokens);
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Watching Specific Keys
+
+<Tabs>
+  <Tab title="Rust">
+    ```rust
+    // Watch multiple specific tokens
+    let keys = ["So11111...", "EPjFWdd5..."];
+    let mut stream = hs.views.tokens().list().watch_keys(&keys);
+
+    while let Some(update) = stream.next().await {
+        println!("Update to tracked token: {:?}", update);
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Subscription Lifecycle
+
+### Automatic Management
+
+Subscriptions are reference-counted and automatically managed:
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    // First subscription - sends subscribe message
+    const stream1 = client.views.tokens.list.use();
+
+    // Second subscription - reuses existing subscription
+    const stream2 = client.views.tokens.list.use();
+
+    // When both streams end, unsubscribe message is sent
+    ```
+  </Tab>
+
+  <Tab title="React">
+    ```tsx
+    // Auto-subscribes on mount
+    function TokenList() {
+      const tokens = useView(MyStack, 'Token/list');
+      return <div>{tokens.length} tokens</div>;
+    }
+    // Auto-unsubscribes on unmount
+    ```
+  </Tab>
+</Tabs>
+
+### Manual Control
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    // Get subscription registry
+    const registry = client.getSubscriptionRegistry();
+
+    // Check active subscriptions
+    const active = registry.getActiveSubscriptions();
+    console.log('Active:', active);
+
+    // Clear all subscriptions
+    registry.clear();
+    ```
+  </Tab>
+</Tabs>
+
+## Connection Monitoring
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    // Monitor frames
+    client.onFrame((frame) => {
+      console.log('Received frame:', frame);
+    });
+
+    // Monitor connection state
+    client.onConnectionStateChange((state, error) => {
+      if (state === 'reconnecting') {
+        console.log('Reconnecting...');
+      } else if (state === 'connected') {
+        console.log('Reconnected, subscriptions restored');
+      }
+    });
+    ```
+
+    Subscriptions are automatically restored after reconnection.
+  </Tab>
+
+  <Tab title="React">
+    ```tsx
+    import { useConnectionState } from 'hyperstack-react';
+
+    function ConnectionMonitor() {
+      const state = useConnectionState(MyStack);
+
+      return (
+        <div>
+          Status: {state}
+          {state === 'reconnecting' && ' - Restoring subscriptions...'}
+        </div>
+      );
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Common Patterns
+
+### Conditional Subscriptions
+
+<Tabs>
+  <Tab title="React">
+    ```tsx
+    function TokenDetail({ mint }: { mint: string | null }) {
+      // Only subscribe when mint is provided
+      const token = useEntity(
+        MyStack, 
+        'Token/state', 
+        mint ?? ''
+      );
+
+      if (!mint) return <p>Select a token</p>;
+      if (!token) return <p>Loading...</p>;
+      return <p>{token.name}</p>;
+    }
+    ```
+  </Tab>
+
+  <Tab title="Rust">
+    ```rust
+    async fn watch_token_if_provided(hs: &HyperStack<MyStack>, mint: Option<&str>) {
+        if let Some(mint) = mint {
+            let mut stream = hs.views.tokens().state().listen(mint);
+            while let Some(token) = stream.next().await {
+                println!("Token: {:?}", token);
+            }
+        }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Manual Refresh
+
+<Tabs>
+  <Tab title="React">
+    ```tsx
+    // Views don't have manual refresh in core SDK
+    // Disconnect and reconnect to force refresh
+    function RefreshButton() {
+      const { getClient } = useHyperstackContext();
+
+      const handleRefresh = async () => {
+        const client = getClient(MyStack);
+        if (client) {
+          client.clearStore();
+          await client.disconnect();
+          await client.connect();
+        }
+      };
+
+      return <button onClick={handleRefresh}>Refresh</button>;
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Views" icon="eye" href="/using-stacks/views">
+    Learn about state and list views
+  </Card>
+  <Card title="Transactions" icon="pen-to-square" href="/using-stacks/transactions">
+    Execute blockchain transactions
+  </Card>
+</CardGroup>

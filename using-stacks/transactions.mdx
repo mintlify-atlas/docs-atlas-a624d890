@@ -1,0 +1,360 @@
+---
+title: "Executing Transactions"
+description: "Submit blockchain transactions using stack instructions"
+---
+
+Instructions are transaction handlers that let you execute blockchain operations. They handle account resolution, serialization, signing, and confirmation.
+
+## What are Instructions?
+
+Instructions are generated from your Rust program and bundled with your stack. Each instruction includes:
+
+- **Account metadata** - Defines required accounts (signer, PDA, user-provided)
+- **Serialization logic** - Converts arguments to instruction data
+- **Error definitions** - Parses program errors
+
+## Basic Usage
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    import { executeInstruction } from 'hyperstack-typescript';
+    import { MyStack } from './stack';
+    import { walletAdapter } from './wallet';
+
+    // Get instruction handler from stack
+    const swapHandler = MyStack.instructions.swap;
+
+    // Execute the instruction
+    const result = await executeInstruction(swapHandler, 
+      // Arguments
+      {
+        amount: 1000000,
+        minOut: 900000,
+      },
+      // Options
+      {
+        wallet: walletAdapter,
+        accounts: {
+          mint: 'So11111...', // User-provided account
+        },
+      }
+    );
+
+    console.log('Transaction:', result.signature);
+    console.log('Slot:', result.slot);
+    ```
+  </Tab>
+</Tabs>
+
+## Instruction Definition
+
+Instructions are defined in your stack SDK:
+
+```typescript
+interface InstructionHandler {
+  // Build the instruction with resolved accounts
+  build(args: Record<string, unknown>, accounts: ResolvedAccounts): BuiltInstruction;
+  
+  // Account metadata for resolution
+  accounts: AccountMeta[];
+  
+  // Error definitions for parsing
+  errors: ErrorMetadata[];
+  
+  // Program ID for PDA derivation
+  programId?: string;
+}
+```
+
+### Account Categories
+
+Accounts are categorized by how they're resolved:
+
+```typescript
+type AccountCategory = 
+  | 'signer'        // Auto-resolved from wallet
+  | 'pda'           // Auto-derived from seeds
+  | 'user_provided' // Provided in options.accounts
+  | 'readonly';     // Read-only account
+```
+
+## Account Resolution
+
+Accounts are automatically resolved based on their category:
+
+### Signer Accounts
+
+```typescript
+// Signer is auto-resolved from wallet
+const result = await executeInstruction(handler, args, {
+  wallet: walletAdapter, // Provides signer address
+});
+```
+
+### PDA Accounts
+
+PDAs are derived automatically:
+
+```typescript
+// PDA derived from seeds defined in the instruction
+const result = await executeInstruction(handler, 
+  {
+    mint: 'So11111...', // Used as seed
+  },
+  {
+    wallet: walletAdapter,
+  }
+);
+// PDA automatically derived using: [b"vault", mint.as_bytes()]
+```
+
+### User-Provided Accounts
+
+```typescript
+// Provide accounts explicitly
+const result = await executeInstruction(handler, args, {
+  wallet: walletAdapter,
+  accounts: {
+    mint: 'So11111...',
+    pool: 'EPjFWdd5...',
+    vault: 'Gh9ZwEmd...',
+  },
+});
+```
+
+## Execution Options
+
+```typescript
+interface ExecuteOptions {
+  // Required: wallet for signing
+  wallet: WalletAdapter;
+  
+  // Optional: user-provided accounts
+  accounts?: Record<string, string>;
+  
+  // Optional: confirmation level
+  confirmationLevel?: 'processed' | 'confirmed' | 'finalized';
+  
+  // Optional: timeout in milliseconds
+  timeout?: number;
+}
+```
+
+### Confirmation Levels
+
+```typescript
+// Wait for processed (fastest)
+const result = await executeInstruction(handler, args, {
+  wallet,
+  confirmationLevel: 'processed',
+});
+
+// Wait for confirmed (recommended)
+const result = await executeInstruction(handler, args, {
+  wallet,
+  confirmationLevel: 'confirmed', // Default
+});
+
+// Wait for finalized (slowest, most secure)
+const result = await executeInstruction(handler, args, {
+  wallet,
+  confirmationLevel: 'finalized',
+  timeout: 90000, // Longer timeout for finalized
+});
+```
+
+## Execution Result
+
+```typescript
+interface ExecutionResult {
+  signature: string;           // Transaction signature
+  confirmationLevel: string;   // Achieved confirmation level
+  slot: number;               // Slot number
+}
+
+const result = await executeInstruction(handler, args, options);
+console.log(`Transaction confirmed at slot ${result.slot}`);
+console.log(`Signature: ${result.signature}`);
+```
+
+## Error Handling
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    import { executeInstruction, parseInstructionError } from 'hyperstack-typescript';
+
+    try {
+      const result = await executeInstruction(handler, args, {
+        wallet: walletAdapter,
+      });
+      console.log('Success:', result.signature);
+    } catch (error) {
+      // Parse program errors
+      const programError = parseInstructionError(error, handler.errors);
+      
+      if (programError) {
+        console.error('Program error:', programError.name);
+        console.error('Message:', programError.message);
+        console.error('Code:', programError.code);
+      } else {
+        console.error('Transaction failed:', error);
+      }
+    }
+    ```
+
+    Program errors are defined in your Rust program:
+    ```rust
+    #[error_code]
+    pub enum ErrorCode {
+        #[msg("Insufficient balance")]
+        InsufficientBalance,
+        #[msg("Invalid amount")]
+        InvalidAmount,
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Wallet Adapters
+
+Wallet adapters handle signing and sending:
+
+```typescript
+interface WalletAdapter {
+  // Get wallet address
+  publicKey: string;
+  
+  // Sign and send transaction
+  signAndSend(transaction: unknown): Promise<string>;
+  
+  // Optional: connection state
+  connected?: boolean;
+}
+```
+
+### Example Adapter
+
+```typescript
+import { useWallet } from '@solana/wallet-adapter-react';
+
+function createWalletAdapter(wallet: ReturnType<typeof useWallet>): WalletAdapter {
+  return {
+    publicKey: wallet.publicKey?.toBase58() ?? '',
+    connected: wallet.connected,
+    signAndSend: async (transaction) => {
+      if (!wallet.signTransaction || !wallet.sendTransaction) {
+        throw new Error('Wallet not ready');
+      }
+      // Implementation depends on wallet library
+      const signed = await wallet.signTransaction(transaction);
+      return await wallet.sendTransaction(signed);
+    },
+  };
+}
+```
+
+## Creating Bound Executors
+
+Bind a wallet to avoid passing it each time:
+
+```typescript
+import { createInstructionExecutor } from 'hyperstack-typescript';
+
+const executor = createInstructionExecutor(walletAdapter);
+
+// Execute without passing wallet
+const result = await executor.execute(handler, args, {
+  confirmationLevel: 'confirmed',
+});
+```
+
+## PDA Derivation
+
+Manually derive PDAs when needed:
+
+```typescript
+import { findProgramAddress, createPublicKeySeed } from 'hyperstack-typescript';
+
+// Derive PDA
+const [pda, bump] = await findProgramAddress(
+  [
+    Buffer.from('vault'),
+    createPublicKeySeed('So11111...'),
+  ],
+  'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' // Program ID
+);
+
+console.log('PDA:', pda);
+console.log('Bump:', bump);
+```
+
+## Common Patterns
+
+### Transaction with Multiple Instructions
+
+```typescript
+// Currently executeInstruction handles single instruction
+// For multiple instructions, build them separately and combine
+const ix1 = handler1.build(args1, accounts1);
+const ix2 = handler2.build(args2, accounts2);
+
+// Build transaction with both instructions
+const transaction = {
+  instructions: [ix1, ix2],
+};
+
+const signature = await wallet.signAndSend(transaction);
+```
+
+### Retry Logic
+
+```typescript
+async function executeWithRetry(
+  handler: InstructionHandler,
+  args: Record<string, unknown>,
+  options: ExecuteOptions,
+  maxRetries = 3
+): Promise<ExecutionResult> {
+  let lastError;
+  
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await executeInstruction(handler, args, options);
+    } catch (error) {
+      lastError = error;
+      console.log(`Attempt ${i + 1} failed, retrying...`);
+      await new Promise(r => setTimeout(r, 1000 * (i + 1)));
+    }
+  }
+  
+  throw lastError;
+}
+```
+
+### Simulation
+
+```typescript
+// Build instruction without executing
+const instruction = handler.build(args, {
+  signer: wallet.publicKey,
+  mint: 'So11111...',
+});
+
+// Simulate using your RPC client
+const simulation = await connection.simulateTransaction(instruction);
+console.log('Logs:', simulation.logs);
+console.log('Units consumed:', simulation.unitsConsumed);
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Views" icon="eye" href="/using-stacks/views">
+    Learn about accessing data
+  </Card>
+  <Card title="Subscriptions" icon="rss" href="/using-stacks/subscriptions">
+    Subscribe to real-time updates
+  </Card>
+</CardGroup>

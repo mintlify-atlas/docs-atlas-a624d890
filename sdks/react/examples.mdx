@@ -1,0 +1,541 @@
+---
+title: "Examples"
+description: "Complete React examples with Hyperstack"
+---
+
+## Ore Mining Dashboard
+
+A real-time dashboard showing Ore mining rounds from the Ore program on Solana.
+
+### Complete Application
+
+```tsx App.tsx
+import { OreDashboard } from './components';
+import { HyperstackProvider } from 'hyperstack-react';
+
+function App() {
+  return (
+    <HyperstackProvider autoConnect={true}>
+      <OreDashboard />
+    </HyperstackProvider>
+  );
+}
+
+export default App;
+```
+
+### Main Dashboard Component
+
+```tsx OreDashboard.tsx
+import { useHyperstack } from 'hyperstack-react';
+import { ORE_STREAM_STACK } from 'hyperstack-stacks/ore';
+import { ValidatedOreRoundSchema } from '../schemas/ore-round-validated';
+
+export function OreDashboard() {
+  const { views, isConnected } = useHyperstack(ORE_STREAM_STACK);
+  
+  // Fetch latest round with schema validation
+  const { data: latestRound } = views.OreRound.latest.useOne({ 
+    schema: ValidatedOreRoundSchema 
+  });
+  
+  // Fetch treasury data
+  const { data: treasuryData } = views.OreTreasury.list.useOne();
+
+  return (
+    <div className="dashboard">
+      <header>
+        <h1>Ore Mining</h1>
+        <p>
+          Live ORE rounds powered by{' '}
+          <a href="https://docs.usehyperstack.com">
+            Hyperstack
+          </a>
+        </p>
+      </header>
+
+      <div className="content">
+        <BlockGrid round={latestRound} />
+        
+        <StatsPanel
+          round={latestRound}
+          treasuryMotherlode={treasuryData?.state?.motherlode}
+          isConnected={isConnected}
+        />
+      </div>
+
+      <ConnectionBadge isConnected={isConnected} />
+    </div>
+  );
+}
+```
+
+### Stats Panel with Live Updates
+
+```tsx StatsPanel.tsx
+import { useState, useEffect } from 'react';
+import type { ValidatedOreRound } from '../schemas/ore-round-validated';
+
+interface StatsPanelProps {
+  round: ValidatedOreRound | undefined;
+  treasuryMotherlode: number | null | undefined;
+  isConnected: boolean;
+}
+
+export function StatsPanel({ 
+  round, 
+  treasuryMotherlode, 
+  isConnected 
+}: StatsPanelProps) {
+  const [timeRemaining, setTimeRemaining] = useState<string>('00:00');
+
+  // Live countdown timer
+  useEffect(() => {
+    const expiresAtUnix = round?.state.estimated_expires_at_unix;
+    if (!expiresAtUnix) {
+      setTimeRemaining('00:00');
+      return;
+    }
+
+    const updateTimer = () => {
+      const now = Math.floor(Date.now() / 1000);
+      const remaining = Math.max(0, expiresAtUnix - now);
+
+      if (remaining > 300) {
+        setTimeRemaining('00:00');
+        return;
+      }
+
+      const minutes = Math.floor(remaining / 60);
+      const seconds = remaining % 60;
+      setTimeRemaining(
+        `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+      );
+    };
+
+    updateTimer();
+    const interval = setInterval(updateTimer, 1000);
+    return () => clearInterval(interval);
+  }, [round?.state.estimated_expires_at_unix]);
+
+  return (
+    <div className="stats-panel">
+      {/* Motherlode */}
+      <div className="stat-card">
+        <div className="stat-value">
+          <OreIcon />
+          <span>{treasuryMotherlode ?? '–'}</span>
+        </div>
+        <div className="stat-label">Motherlode</div>
+      </div>
+
+      {/* Time Remaining */}
+      <div className="stat-card">
+        <div className="stat-value">{timeRemaining}</div>
+        <div className="stat-label">Time remaining</div>
+      </div>
+
+      {/* Total Deployed */}
+      <div className="stat-card">
+        <div className="stat-value">
+          <SolanaIcon />
+          <span>
+            {round ? round.state.total_deployed.toFixed(4) : '0.0000'}
+          </span>
+        </div>
+        <div className="stat-label">Total deployed</div>
+      </div>
+
+      {/* Round Info */}
+      <div className="round-info">
+        <span>Round {round?.id.round_id ?? '–'}</span>
+        {round && (
+          <>
+            <span>·</span>
+            <span>{round.state.total_miners} miners</span>
+          </>
+        )}
+      </div>
+
+      {/* Connection Status */}
+      {!isConnected && (
+        <div className="connecting-banner">
+          Connecting...
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+### Schema Validation
+
+```tsx schemas/ore-round-validated.ts
+import { z } from 'zod';
+
+export const ValidatedOreRoundSchema = z.object({
+  id: z.object({
+    round_id: z.number(),
+  }),
+  state: z.object({
+    estimated_expires_at_unix: z.number(),
+    total_deployed: z.number(),
+    total_miners: z.number(),
+  }),
+});
+
+export type ValidatedOreRound = z.infer<typeof ValidatedOreRoundSchema>;
+```
+
+## Simple Counter Example
+
+### Stack Definition
+
+```tsx stack.ts
+import { defineStack } from 'hyperstack-typescript';
+
+export const COUNTER_STACK = defineStack({
+  name: 'counter',
+  url: 'wss://api.example.com/counter',
+  views: {
+    Counter: {
+      current: {
+        mode: 'state' as const,
+        view: 'counter_current',
+      },
+      history: {
+        mode: 'list' as const,
+        view: 'counter_history',
+      },
+    },
+  },
+  instructions: {
+    increment: defineInstruction({
+      name: 'increment',
+      accounts: [
+        { name: 'counter', category: 'pda', pda: { seeds: ['counter'] } },
+        { name: 'user', category: 'signer' },
+      ],
+    }),
+  },
+});
+```
+
+### Counter Component
+
+```tsx Counter.tsx
+import { useHyperstack } from 'hyperstack-react';
+import { COUNTER_STACK } from './stack';
+
+interface CounterData {
+  value: number;
+  lastUpdated: number;
+}
+
+function Counter() {
+  const { views, instructions, isConnected } = useHyperstack(COUNTER_STACK);
+  
+  // Fetch current counter value
+  const { data, isLoading } = views.Counter.current.use<CounterData>();
+  
+  // Setup mutation for incrementing
+  const incrementMutation = instructions.increment.useMutation();
+  
+  const handleIncrement = async () => {
+    try {
+      await incrementMutation.submit({});
+    } catch (error) {
+      console.error('Failed to increment:', error);
+    }
+  };
+  
+  if (isLoading) {
+    return <div>Loading...</div>;
+  }
+  
+  return (
+    <div>
+      <h1>Counter: {data?.value ?? 0}</h1>
+      
+      <button 
+        onClick={handleIncrement}
+        disabled={!isConnected || incrementMutation.isLoading}
+      >
+        {incrementMutation.isLoading ? 'Incrementing...' : 'Increment'}
+      </button>
+      
+      {incrementMutation.error && (
+        <div className="error">{incrementMutation.error}</div>
+      )}
+      
+      {incrementMutation.signature && (
+        <div className="success">
+          Transaction: {incrementMutation.signature}
+        </div>
+      )}
+      
+      <div className="status">
+        {isConnected ? '🟢 Connected' : '🔴 Disconnected'}
+      </div>
+    </div>
+  );
+}
+```
+
+### Counter History
+
+```tsx CounterHistory.tsx
+import { useHyperstack } from 'hyperstack-react';
+import { COUNTER_STACK } from './stack';
+
+interface HistoryEntry {
+  value: number;
+  timestamp: number;
+  user: string;
+}
+
+function CounterHistory() {
+  const { views } = useHyperstack(COUNTER_STACK);
+  
+  // Fetch last 10 updates
+  const { data, isLoading, refresh } = views.Counter.history.use<HistoryEntry>({
+    limit: 10,
+  });
+  
+  if (isLoading) {
+    return <div>Loading history...</div>;
+  }
+  
+  return (
+    <div>
+      <div className="header">
+        <h2>Counter History</h2>
+        <button onClick={refresh}>Refresh</button>
+      </div>
+      
+      <ul>
+        {data?.map((entry, i) => (
+          <li key={i}>
+            <span>Value: {entry.value}</span>
+            <span>User: {entry.user.slice(0, 8)}...</span>
+            <span>{new Date(entry.timestamp * 1000).toLocaleString()}</span>
+          </li>
+        ))}
+      </ul>
+      
+      {data?.length === 0 && <p>No history yet</p>}
+    </div>
+  );
+}
+```
+
+## Todo List Example
+
+```tsx TodoList.tsx
+import { useState } from 'react';
+import { useHyperstack } from 'hyperstack-react';
+import { TODO_STACK } from './stack';
+import { z } from 'zod';
+
+const TodoSchema = z.object({
+  id: z.string(),
+  text: z.string(),
+  completed: z.boolean(),
+  createdAt: z.number(),
+});
+
+type Todo = z.infer<typeof TodoSchema>;
+
+function TodoList() {
+  const { views, instructions } = useHyperstack(TODO_STACK);
+  const [newTodoText, setNewTodoText] = useState('');
+  
+  // Fetch all todos
+  const { data: todos, isLoading } = views.Todos.list.use<Todo>({
+    schema: TodoSchema,
+  });
+  
+  // Fetch only active todos
+  const { data: activeTodos } = views.Todos.list.use<Todo>({
+    where: { completed: false },
+    schema: TodoSchema,
+  });
+  
+  const createMutation = instructions.createTodo.useMutation();
+  const toggleMutation = instructions.toggleTodo.useMutation();
+  const deleteMutation = instructions.deleteTodo.useMutation();
+  
+  const handleCreate = async () => {
+    if (!newTodoText.trim()) return;
+    
+    try {
+      await createMutation.submit({ text: newTodoText });
+      setNewTodoText('');
+    } catch (error) {
+      console.error('Failed to create todo:', error);
+    }
+  };
+  
+  const handleToggle = async (id: string) => {
+    try {
+      await toggleMutation.submit({ id });
+    } catch (error) {
+      console.error('Failed to toggle todo:', error);
+    }
+  };
+  
+  const handleDelete = async (id: string) => {
+    try {
+      await deleteMutation.submit({ id });
+    } catch (error) {
+      console.error('Failed to delete todo:', error);
+    }
+  };
+  
+  if (isLoading) {
+    return <div>Loading todos...</div>;
+  }
+  
+  return (
+    <div>
+      <h1>Todo List</h1>
+      
+      <div className="stats">
+        <span>Total: {todos?.length ?? 0}</span>
+        <span>Active: {activeTodos?.length ?? 0}</span>
+      </div>
+      
+      <div className="add-todo">
+        <input
+          type="text"
+          value={newTodoText}
+          onChange={(e) => setNewTodoText(e.target.value)}
+          placeholder="What needs to be done?"
+          onKeyPress={(e) => e.key === 'Enter' && handleCreate()}
+        />
+        <button 
+          onClick={handleCreate}
+          disabled={createMutation.isLoading}
+        >
+          Add
+        </button>
+      </div>
+      
+      {createMutation.error && (
+        <div className="error">{createMutation.error}</div>
+      )}
+      
+      <ul className="todo-list">
+        {todos?.map((todo) => (
+          <li key={todo.id} className={todo.completed ? 'completed' : ''}>
+            <input
+              type="checkbox"
+              checked={todo.completed}
+              onChange={() => handleToggle(todo.id)}
+              disabled={toggleMutation.isLoading}
+            />
+            <span>{todo.text}</span>
+            <button 
+              onClick={() => handleDelete(todo.id)}
+              disabled={deleteMutation.isLoading}
+            >
+              Delete
+            </button>
+          </li>
+        ))}
+      </ul>
+      
+      {todos?.length === 0 && (
+        <p className="empty">No todos yet. Add one above!</p>
+      )}
+    </div>
+  );
+}
+
+export default TodoList;
+```
+
+## User Profile Example
+
+```tsx UserProfile.tsx
+import { useHyperstack } from 'hyperstack-react';
+import { USER_STACK } from './stack';
+import { z } from 'zod';
+
+const ProfileSchema = z.object({
+  username: z.string(),
+  avatar: z.string().url(),
+  bio: z.string(),
+  followers: z.number(),
+  following: z.number(),
+});
+
+type Profile = z.infer<typeof ProfileSchema>;
+
+function UserProfile({ userId }: { userId: string }) {
+  const { views, instructions } = useHyperstack(USER_STACK);
+  
+  // Fetch user profile by ID
+  const { data: profile, isLoading } = views.Users.byId.use<Profile>(
+    { id: userId },
+    { schema: ProfileSchema }
+  );
+  
+  const followMutation = instructions.followUser.useMutation();
+  
+  const handleFollow = async () => {
+    try {
+      await followMutation.submit({ userId });
+    } catch (error) {
+      console.error('Failed to follow user:', error);
+    }
+  };
+  
+  if (isLoading) {
+    return <div>Loading profile...</div>;
+  }
+  
+  if (!profile) {
+    return <div>User not found</div>;
+  }
+  
+  return (
+    <div className="profile">
+      <img src={profile.avatar} alt={profile.username} />
+      <h1>{profile.username}</h1>
+      <p>{profile.bio}</p>
+      
+      <div className="stats">
+        <span>{profile.followers} followers</span>
+        <span>{profile.following} following</span>
+      </div>
+      
+      <button 
+        onClick={handleFollow}
+        disabled={followMutation.isLoading}
+      >
+        {followMutation.isLoading ? 'Following...' : 'Follow'}
+      </button>
+      
+      {followMutation.error && (
+        <div className="error">{followMutation.error}</div>
+      )}
+      
+      {followMutation.signature && (
+        <div className="success">Now following {profile.username}!</div>
+      )}
+    </div>
+  );
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Provider Setup" icon="gear" href="./provider">
+    Configure HyperstackProvider
+  </Card>
+  <Card title="Hooks Reference" icon="react" href="./hooks">
+    Complete hooks documentation
+  </Card>
+</CardGroup>

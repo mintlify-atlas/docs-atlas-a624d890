@@ -1,0 +1,527 @@
+---
+title: WebSocket Protocol
+description: Understanding the HyperStack WebSocket protocol and frame types
+---
+
+The HyperStack server streams entity updates to clients over WebSocket using a JSON-based protocol. Clients subscribe to views and receive real-time updates.
+
+## Connection
+
+### Establish Connection
+
+```javascript
+const ws = new WebSocket('ws://localhost:8877');
+
+ws.onopen = () => {
+  console.log('Connected to HyperStack server');
+};
+
+ws.onerror = (error) => {
+  console.error('WebSocket error:', error);
+};
+
+ws.onclose = () => {
+  console.log('Disconnected from server');
+};
+```
+
+### TLS/SSL
+
+For production, use secure WebSocket (wss://):
+
+```javascript
+const ws = new WebSocket('wss://ws.hyperstack.example.com');
+```
+
+## Subscription
+
+### Subscribe Message
+
+Clients send subscription messages to start receiving updates:
+
+```json
+{
+  "view": "Token/list",
+  "key": "*"
+}
+```
+
+**Fields**:
+- `view` - View ID (format: `{Entity}/{mode}`)
+- `key` - Key filter (`"*"` for all, or specific key)
+
+### Subscription Examples
+
+**List all tokens**:
+```json
+{"view": "Token/list", "key": "*"}
+```
+
+**Watch specific token**:
+```json
+{"view": "Token/state", "key": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"}
+```
+
+**Append-only events**:
+```json
+{"view": "Trade/append", "key": "*"}
+```
+
+### Subscribed Frame
+
+Server acknowledges subscription with a "subscribed" frame:
+
+```json
+{
+  "op": "subscribed",
+  "view": "Token/list",
+  "mode": "list",
+  "sort": {
+    "field": ["_seq"],
+    "order": "desc"
+  }
+}
+```
+
+**Fields**:
+- `op` - Always `"subscribed"`
+- `view` - View ID
+- `mode` - Streaming mode (`"list"`, `"state"`, or `"append"`)
+- `sort` - Optional sort configuration for sorted views
+
+## Snapshot Frames
+
+After subscription, the server sends snapshot frames with current state.
+
+### Snapshot Frame Format
+
+```json
+{
+  "op": "snapshot",
+  "mode": "list",
+  "entity": "Token/list",
+  "data": [
+    {
+      "key": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "data": {
+        "symbol": "USDC",
+        "decimals": 6,
+        "supply": 1000000000,
+        "_seq": "12345:1"
+      }
+    },
+    {
+      "key": "So11111111111111111111111111111111111111112",
+      "data": {
+        "symbol": "SOL",
+        "decimals": 9,
+        "supply": 500000000,
+        "_seq": "12345:2"
+      }
+    }
+  ],
+  "complete": false
+}
+```
+
+**Fields**:
+- `op` - Always `"snapshot"`
+- `mode` - Streaming mode
+- `entity` - View ID
+- `data` - Array of entities
+- `complete` - Whether this is the final snapshot batch
+
+### Snapshot Batching
+
+Snapshots are sent in batches to avoid large initial payloads:
+
+1. **First batch**: 50 entities, `complete: false`
+2. **Subsequent batches**: 100 entities each, `complete: false`
+3. **Final batch**: Remaining entities, `complete: true`
+
+**Example sequence**:
+```json
+// Batch 1 (50 entities)
+{"op": "snapshot", "data": [...], "complete": false}
+
+// Batch 2 (100 entities)
+{"op": "snapshot", "data": [...], "complete": false}
+
+// Batch 3 (42 entities)
+{"op": "snapshot", "data": [...], "complete": true}
+```
+
+Clients should buffer entities until `complete: true`.
+
+## Update Frames
+
+After snapshots, clients receive real-time update frames.
+
+### Patch Frame
+
+Update or insert an entity:
+
+```json
+{
+  "mode": "list",
+  "entity": "Token/list",
+  "op": "patch",
+  "key": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+  "data": {
+    "supply": 1000000100,
+    "_seq": "12346:1"
+  },
+  "append": []
+}
+```
+
+**Fields**:
+- `mode` - Streaming mode
+- `entity` - View ID
+- `op` - Always `"patch"`
+- `key` - Entity key
+- `data` - Partial state update (only changed fields)
+- `append` - Array of field paths that were appended (not replaced)
+
+### Append Fields
+
+When fields use `population: Append`, only new items are sent:
+
+```json
+{
+  "op": "patch",
+  "key": "game123",
+  "data": {
+    "events": [
+      {"type": "attack", "damage": 50}
+    ]
+  },
+  "append": ["events"]
+}
+```
+
+Clients should append to the array rather than replacing it:
+
+```javascript
+if (frame.append.includes('events')) {
+  entity.events.push(...frame.data.events);
+} else {
+  entity.events = frame.data.events;
+}
+```
+
+### Delete Frame
+
+Remove an entity (for derived views with filtering):
+
+```json
+{
+  "mode": "list",
+  "entity": "ActiveGame/latest",
+  "op": "delete",
+  "key": "game123",
+  "data": null,
+  "append": []
+}
+```
+
+Delete frames are only sent for derived views where entities can leave the result set.
+
+## Streaming Modes
+
+### State Mode
+
+Watch a single entity by key. Only the latest value is kept.
+
+**Subscribe**:
+```json
+{"view": "Token/state", "key": "EPjFWdd5..."}
+```
+
+**Snapshot** (if entity exists):
+```json
+{
+  "op": "snapshot",
+  "mode": "state",
+  "entity": "Token/state",
+  "data": [
+    {
+      "key": "EPjFWdd5...",
+      "data": {"symbol": "USDC", "decimals": 6}
+    }
+  ],
+  "complete": true
+}
+```
+
+**Updates**:
+```json
+{"op": "patch", "key": "EPjFWdd5...", "data": {"supply": 1000000100}}
+```
+
+**Use cases**: Current price, user balance, account status
+
+### List Mode
+
+Subscribe to a collection of entities. All entities are kept.
+
+**Subscribe**:
+```json
+{"view": "Token/list", "key": "*"}
+```
+
+**Snapshot**:
+```json
+{
+  "op": "snapshot",
+  "mode": "list",
+  "entity": "Token/list",
+  "data": [
+    {"key": "token1", "data": {...}},
+    {"key": "token2", "data": {...}}
+  ],
+  "complete": false
+}
+```
+
+**Updates**:
+```json
+{"op": "patch", "key": "token3", "data": {...}}
+```
+
+**Use cases**: Token list, leaderboard, inventory
+
+### Append Mode
+
+Receive events as they occur. No snapshot is sent.
+
+**Subscribe**:
+```json
+{"view": "Trade/append", "key": "*"}
+```
+
+**No snapshot** - only new events
+
+**Updates**:
+```json
+{"op": "patch", "key": "trade_12345", "data": {"price": 100, "amount": 50}}
+```
+
+**Use cases**: Trade feed, event log, notifications
+
+## Unsubscribe
+
+Stop receiving updates for a view:
+
+```json
+{
+  "op": "unsubscribe",
+  "view": "Token/list"
+}
+```
+
+Server stops sending frames for that view. No acknowledgment is sent.
+
+## Ping/Pong
+
+Keep connection alive:
+
+**Client sends**:
+```json
+{"op": "ping"}
+```
+
+**Server ignores** (updates last seen time internally)
+
+Alternatively, use WebSocket built-in ping/pong frames.
+
+## Error Handling
+
+### Connection Loss
+
+If the connection drops, clients should:
+
+1. Wait a short delay (exponential backoff)
+2. Reconnect
+3. Resubscribe to all views
+4. Server sends fresh snapshots
+
+```javascript
+let reconnectDelay = 1000; // Start with 1 second
+
+function connect() {
+  const ws = new WebSocket('ws://localhost:8877');
+  
+  ws.onclose = () => {
+    console.log(`Reconnecting in ${reconnectDelay}ms...`);
+    setTimeout(connect, reconnectDelay);
+    reconnectDelay = Math.min(reconnectDelay * 2, 60000); // Max 1 minute
+  };
+  
+  ws.onopen = () => {
+    reconnectDelay = 1000; // Reset delay
+    // Resubscribe to all views
+  };
+}
+```
+
+### Invalid Subscription
+
+If a view doesn't exist, the server logs a warning but doesn't send an error frame. Clients won't receive snapshots or updates.
+
+## Compression
+
+The server may compress large frames with gzip. Clients should handle compressed WebSocket messages.
+
+**Location**: `compression.rs`
+
+```rust
+pub fn maybe_compress(data: &[u8]) -> Bytes {
+    const COMPRESSION_THRESHOLD: usize = 1024; // 1KB
+    
+    if data.len() >= COMPRESSION_THRESHOLD {
+        // Compress with gzip
+        compress_gzip(data)
+    } else {
+        // Send uncompressed
+        Bytes::copy_from_slice(data)
+    }
+}
+```
+
+Clients using browsers automatically decompress. Native clients should handle gzip if needed.
+
+## Client Implementation
+
+### JavaScript/TypeScript
+
+```typescript
+class HyperStackClient {
+  private ws: WebSocket;
+  private subscriptions = new Map<string, (frame: any) => void>();
+  private entities = new Map<string, Map<string, any>>();
+  
+  constructor(url: string) {
+    this.ws = new WebSocket(url);
+    this.ws.onmessage = (event) => this.handleMessage(event.data);
+  }
+  
+  subscribe(view: string, key: string, callback: (entities: Map<string, any>) => void) {
+    this.subscriptions.set(view, callback);
+    this.entities.set(view, new Map());
+    
+    this.ws.send(JSON.stringify({ view, key }));
+  }
+  
+  private handleMessage(data: string) {
+    const frame = JSON.parse(data);
+    const entities = this.entities.get(frame.entity);
+    if (!entities) return;
+    
+    switch (frame.op) {
+      case 'subscribed':
+        console.log('Subscribed to', frame.view);
+        break;
+        
+      case 'snapshot':
+        for (const {key, data} of frame.data) {
+          entities.set(key, data);
+        }
+        if (frame.complete) {
+          this.notifySubscriber(frame.entity);
+        }
+        break;
+        
+      case 'patch':
+        const existing = entities.get(frame.key) || {};
+        
+        // Handle append fields
+        for (const field of frame.append) {
+          const parts = field.split('.');
+          const current = this.getNestedField(existing, parts);
+          const update = this.getNestedField(frame.data, parts);
+          if (Array.isArray(current) && Array.isArray(update)) {
+            current.push(...update);
+          }
+        }
+        
+        // Merge patch
+        Object.assign(existing, frame.data);
+        entities.set(frame.key, existing);
+        
+        this.notifySubscriber(frame.entity);
+        break;
+        
+      case 'delete':
+        entities.delete(frame.key);
+        this.notifySubscriber(frame.entity);
+        break;
+    }
+  }
+  
+  private notifySubscriber(view: string) {
+    const callback = this.subscriptions.get(view);
+    const entities = this.entities.get(view);
+    if (callback && entities) {
+      callback(entities);
+    }
+  }
+  
+  private getNestedField(obj: any, parts: string[]): any {
+    let current = obj;
+    for (const part of parts) {
+      current = current?.[part];
+    }
+    return current;
+  }
+}
+```
+
+### Usage
+
+```typescript
+const client = new HyperStackClient('ws://localhost:8877');
+
+client.subscribe('Token/list', '*', (entities) => {
+  console.log('Token count:', entities.size);
+  for (const [key, token] of entities) {
+    console.log(`${token.symbol}: ${token.supply}`);
+  }
+});
+```
+
+## Protocol Summary
+
+### Client → Server
+
+| Message | Purpose |
+|---------|--------|
+| `{"view": "X", "key": "*"}` | Subscribe to view |
+| `{"op": "unsubscribe", "view": "X"}` | Unsubscribe from view |
+| `{"op": "ping"}` | Keep-alive ping |
+
+### Server → Client
+
+| Frame | Purpose |
+|-------|--------|
+| `{"op": "subscribed", ...}` | Subscription acknowledged |
+| `{"op": "snapshot", ...}` | Initial state |
+| `{"op": "patch", ...}` | Update entity |
+| `{"op": "delete", ...}` | Remove entity |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Projector" icon="broadcast-tower" href="/server/projector">
+    Learn about frame generation
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/server/architecture">
+    Understand the architecture
+  </Card>
+  <Card title="Deployment" icon="rocket" href="/server/deployment">
+    Deploy the server
+  </Card>
+  <Card title="Monitoring" icon="chart-line" href="/server/monitoring">
+    Monitor WebSocket metrics
+  </Card>
+</CardGroup>

@@ -1,0 +1,447 @@
+---
+title: Working with Views
+description: Query and subscribe to real-time entity data using typed views
+---
+
+## Overview
+
+Views provide strongly-typed access to entity data with real-time synchronization. HyperStack supports two view modes:
+
+- **State views** - Single entities keyed by ID
+- **List views** - Collections of entities
+
+## Accessing Views
+
+Views are accessed through the `client.views` property, organized by entity and view name.
+
+```typescript
+const stack = {
+  name: 'my-stack',
+  url: 'wss://api.example.com',
+  views: {
+    users: {
+      state: { mode: 'state' as const, view: 'users.state' },
+      list: { mode: 'list' as const, view: 'users.list' },
+    },
+    posts: {
+      byUser: { mode: 'list' as const, view: 'posts.by_user' },
+    },
+  },
+};
+
+const client = await HyperStack.connect(stack);
+
+// Access views
+const userState = client.views.users.state;
+const userList = client.views.users.list;
+const postsByUser = client.views.posts.byUser;
+```
+
+## State Views
+
+State views represent single entities identified by a key.
+
+### TypedStateView Interface
+
+```typescript
+interface TypedStateView<T> {
+  use<TSchema = T>(key: string, options?: WatchOptions<TSchema>): AsyncIterable<TSchema>;
+  watch(key: string, options?: WatchOptions): AsyncIterable<Update<T>>;
+  watchRich(key: string, options?: WatchOptions): AsyncIterable<RichUpdate<T>>;
+  get(key: string): Promise<T | null>;
+  getSync(key: string): T | null | undefined;
+}
+```
+
+### get()
+
+Fetch a single entity by key.
+
+```typescript
+const user = await client.views.users.state.get('user-123');
+if (user) {
+  console.log(user.name);
+}
+```
+
+**Returns:** `Promise<T | null>` - Entity or null if not found
+
+### getSync()
+
+Synchronously retrieve an entity from local storage.
+
+```typescript
+const user = client.views.users.state.getSync('user-123');
+if (user) {
+  console.log(user.name);
+}
+```
+
+**Returns:** `T | null | undefined`
+- `T` - Entity found in cache
+- `null` - Entity explicitly does not exist
+- `undefined` - No cached data available
+
+### use()
+
+Subscribe to real-time updates for an entity. Returns an async iterable that yields the current entity whenever it changes.
+
+```typescript
+for await (const user of client.views.users.state.use('user-123')) {
+  console.log('User updated:', user);
+}
+```
+
+<ParamField path="key" type="string" required>
+  Entity key to subscribe to
+</ParamField>
+
+<ParamField path="options" type="WatchOptions">
+  Optional subscription options
+</ParamField>
+
+**React Example:**
+
+```typescript
+import { useEffect, useState } from 'react';
+
+function UserProfile({ userId }: { userId: string }) {
+  const [user, setUser] = useState(null);
+
+  useEffect(() => {
+    const subscription = (async () => {
+      for await (const userData of client.views.users.state.use(userId)) {
+        setUser(userData);
+      }
+    })();
+
+    return () => subscription.return?.();
+  }, [userId]);
+
+  if (!user) return <div>Loading...</div>;
+  return <div>{user.name}</div>;
+}
+```
+
+### watch()
+
+Subscribe to update events for an entity. Yields `Update<T>` objects describing changes.
+
+```typescript
+for await (const update of client.views.users.state.watch('user-123')) {
+  if (update.type === 'upsert') {
+    console.log('User created/replaced:', update.data);
+  } else if (update.type === 'patch') {
+    console.log('User patched:', update.data);
+  } else if (update.type === 'delete') {
+    console.log('User deleted');
+  }
+}
+```
+
+**Update Types:**
+
+```typescript
+type Update<T> =
+  | { type: 'upsert'; key: string; data: T }
+  | { type: 'patch'; key: string; data: Partial<T> }
+  | { type: 'delete'; key: string };
+```
+
+### watchRich()
+
+Subscribe to rich update events with before/after snapshots.
+
+```typescript
+for await (const update of client.views.users.state.watchRich('user-123')) {
+  if (update.type === 'created') {
+    console.log('User created:', update.data);
+  } else if (update.type === 'updated') {
+    console.log('Before:', update.before);
+    console.log('After:', update.after);
+  } else if (update.type === 'deleted') {
+    console.log('Last known state:', update.lastKnown);
+  }
+}
+```
+
+**RichUpdate Types:**
+
+```typescript
+type RichUpdate<T> =
+  | { type: 'created'; key: string; data: T }
+  | { type: 'updated'; key: string; before: T; after: T; patch?: unknown }
+  | { type: 'deleted'; key: string; lastKnown?: T };
+```
+
+## List Views
+
+List views represent collections of entities.
+
+### TypedListView Interface
+
+```typescript
+interface TypedListView<T> {
+  use<TSchema = T>(options?: WatchOptions<TSchema>): AsyncIterable<TSchema>;
+  watch(options?: WatchOptions): AsyncIterable<Update<T>>;
+  watchRich(options?: WatchOptions): AsyncIterable<RichUpdate<T>>;
+  get(): Promise<T[]>;
+  getSync(): T[] | undefined;
+}
+```
+
+### get()
+
+Fetch all entities in the list.
+
+```typescript
+const users = await client.views.users.list.get();
+console.log(`Found ${users.length} users`);
+```
+
+**Returns:** `Promise<T[]>` - Array of entities
+
+### getSync()
+
+Synchronously retrieve all entities from local storage.
+
+```typescript
+const users = client.views.users.list.getSync();
+if (users) {
+  console.log(`Cached ${users.length} users`);
+}
+```
+
+**Returns:** `T[] | undefined`
+- `T[]` - Cached entities
+- `undefined` - No cached data available
+
+### use()
+
+Subscribe to real-time updates for all entities in the list.
+
+```typescript
+for await (const entity of client.views.users.list.use()) {
+  console.log('Entity in list:', entity);
+}
+```
+
+<Note>
+  The `use()` method yields individual entities as they are added, updated, or when the subscription initializes.
+</Note>
+
+### watch()
+
+Subscribe to update events for entities in the list.
+
+```typescript
+for await (const update of client.views.users.list.watch()) {
+  console.log(`${update.type} on ${update.key}`);
+}
+```
+
+### watchRich()
+
+Subscribe to rich update events for entities in the list.
+
+```typescript
+for await (const update of client.views.users.list.watchRich()) {
+  if (update.type === 'updated') {
+    console.log('Changed from', update.before, 'to', update.after);
+  }
+}
+```
+
+## Watch Options
+
+All subscription methods (`use`, `watch`, `watchRich`) accept optional configuration.
+
+### WatchOptions
+
+<ParamField path="take" type="number">
+  Limit the number of entities to retrieve
+</ParamField>
+
+<ParamField path="skip" type="number">
+  Skip the first N entities
+</ParamField>
+
+<ParamField path="filters" type="Record<string, string>">
+  Filter entities by field values
+</ParamField>
+
+<ParamField path="schema" type="Schema<TSchema>">
+  Runtime validation schema (e.g., Zod)
+</ParamField>
+
+### Filtering
+
+```typescript
+// Get only active users
+for await (const user of client.views.users.list.use({
+  filters: { status: 'active' },
+})) {
+  console.log('Active user:', user);
+}
+```
+
+### Pagination
+
+```typescript
+// Get first 10 users
+const firstPage = await client.views.users.list.use({
+  take: 10,
+  skip: 0,
+});
+
+// Get next 10 users
+const secondPage = await client.views.users.list.use({
+  take: 10,
+  skip: 10,
+});
+```
+
+### Schema Validation
+
+Validate entities at runtime using Zod or similar libraries.
+
+```typescript
+import { z } from 'zod';
+
+const UserSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  email: z.string().email(),
+});
+
+for await (const user of client.views.users.state.use('user-123', {
+  schema: UserSchema,
+})) {
+  // user is validated against UserSchema
+  console.log(user.email); // Type-safe
+}
+```
+
+## View Helper Functions
+
+Low-level functions for creating typed views programmatically.
+
+### createTypedStateView()
+
+```typescript
+function createTypedStateView<T>(
+  viewDef: ViewDef<T, 'state'>,
+  storage: StorageAdapter,
+  subscriptionRegistry: SubscriptionRegistry
+): TypedStateView<T>
+```
+
+### createTypedListView()
+
+```typescript
+function createTypedListView<T>(
+  viewDef: ViewDef<T, 'list'>,
+  storage: StorageAdapter,
+  subscriptionRegistry: SubscriptionRegistry
+): TypedListView<T>
+```
+
+### createTypedViews()
+
+```typescript
+function createTypedViews<TStack extends StackDefinition>(
+  stack: TStack,
+  storage: StorageAdapter,
+  subscriptionRegistry: SubscriptionRegistry
+): TypedViews<TStack['views']>
+```
+
+<Note>
+  These functions are used internally by `HyperStack.connect()`. You typically don't need to call them directly.
+</Note>
+
+## Type Definitions
+
+```typescript
+import type {
+  ViewDef,
+  ViewGroup,
+  TypedViews,
+  TypedViewGroup,
+  TypedStateView,
+  TypedListView,
+  WatchOptions,
+  Update,
+  RichUpdate,
+} from '@hyperstack/core';
+```
+
+## Best Practices
+
+### Use getSync() for Optimistic UI
+
+```typescript
+function UserAvatar({ userId }: { userId: string }) {
+  // Show cached data immediately
+  const cached = client.views.users.state.getSync(userId);
+  
+  const [user, setUser] = useState(cached);
+
+  useEffect(() => {
+    // Subscribe to updates
+    (async () => {
+      for await (const u of client.views.users.state.use(userId)) {
+        setUser(u);
+      }
+    })();
+  }, [userId]);
+
+  return <img src={user?.avatar} alt={user?.name} />;
+}
+```
+
+### Cleanup Subscriptions
+
+Always cleanup async iterables when components unmount or dependencies change.
+
+```typescript
+useEffect(() => {
+  const controller = new AbortController();
+
+  (async () => {
+    try {
+      for await (const user of client.views.users.state.use(userId)) {
+        if (controller.signal.aborted) break;
+        setUser(user);
+      }
+    } catch (err) {
+      if (!controller.signal.aborted) throw err;
+    }
+  })();
+
+  return () => controller.abort();
+}, [userId]);
+```
+
+### Handle Loading States
+
+```typescript
+for await (const user of client.views.users.state.use('user-123')) {
+  if (user === null) {
+    console.log('User does not exist');
+  } else {
+    console.log('User loaded:', user);
+  }
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Subscriptions" icon="rss" href="/sdks/typescript/subscriptions">
+    Deep dive into subscription management
+  </Card>
+  <Card title="Storage Adapters" icon="database" href="/sdks/typescript/storage">
+    Integrate with state management libraries
+  </Card>
+</CardGroup>

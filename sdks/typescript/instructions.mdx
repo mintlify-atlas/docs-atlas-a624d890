@@ -1,0 +1,596 @@
+---
+title: Instruction Execution
+description: Execute Solana program instructions with automatic account resolution and PDA derivation
+---
+
+## Overview
+
+HyperStack provides a powerful instruction execution system for Solana programs with automatic:
+- Account resolution (signer, PDA, user-provided)
+- PDA derivation with type-safe seed definitions
+- Transaction building and signing
+- Confirmation waiting
+- Error parsing
+
+## Quick Start
+
+```typescript
+import { HyperStack } from '@hyperstack/core';
+import type { WalletAdapter } from '@hyperstack/core';
+
+const stack = {
+  name: 'my-program',
+  url: 'wss://api.example.com',
+  views: { /* ... */ },
+  instructions: {
+    createUser: myCreateUserHandler,
+  },
+};
+
+const client = await HyperStack.connect(stack);
+
+// Execute instruction
+const result = await client.instructions.createUser(
+  { name: 'Alice', age: 30 },
+  { wallet }
+);
+
+console.log('Transaction:', result.signature);
+```
+
+## Instruction Handlers
+
+Instruction handlers are generated from your Solana program IDL and define how to build and execute instructions.
+
+### InstructionHandler Interface
+
+```typescript
+interface InstructionHandler {
+  build(args: Record<string, unknown>, accounts: ResolvedAccounts): BuiltInstruction;
+  accounts: AccountMeta[];
+  errors: ErrorMetadata[];
+  programId?: string;
+}
+```
+
+<ParamField path="build" type="function" required>
+  Generated function that serializes arguments and builds the instruction
+</ParamField>
+
+<ParamField path="accounts" type="AccountMeta[]" required>
+  Account metadata for resolution
+</ParamField>
+
+<ParamField path="errors" type="ErrorMetadata[]">
+  Program error definitions for parsing
+</ParamField>
+
+<ParamField path="programId" type="string">
+  Program ID used for PDA derivation
+</ParamField>
+
+## Executing Instructions
+
+### Via Client Instructions
+
+The recommended way is to use the client's instruction interface.
+
+```typescript
+const result = await client.instructions.createUser(
+  { name: 'Alice' }, // Instruction arguments
+  { wallet }         // Execution options
+);
+```
+
+### executeInstruction()
+
+Direct execution function for manual control.
+
+```typescript
+import { executeInstruction } from '@hyperstack/core';
+
+const result = await executeInstruction(
+  handler,
+  args,
+  options
+);
+```
+
+<ParamField path="handler" type="InstructionHandler" required>
+  Instruction handler from generated SDK
+</ParamField>
+
+<ParamField path="args" type="Record<string, unknown>" required>
+  Instruction arguments
+</ParamField>
+
+<ParamField path="options" type="ExecuteOptions">
+  Execution options
+</ParamField>
+
+### ExecuteOptions
+
+<ParamField path="wallet" type="WalletAdapter" required>
+  Wallet adapter for signing transactions
+</ParamField>
+
+<ParamField path="accounts" type="Record<string, string>">
+  User-provided account addresses (base58)
+</ParamField>
+
+<ParamField path="confirmationLevel" type="ConfirmationLevel">
+  Transaction confirmation level
+  
+  Default: `'confirmed'`
+</ParamField>
+
+<ParamField path="timeout" type="number">
+  Maximum time to wait for confirmation in milliseconds
+  
+  Default: `60000`
+</ParamField>
+
+<ParamField path="refresh" type="Array<{ view: string; key?: string }>">
+  Views to refresh after transaction completes
+</ParamField>
+
+### ExecutionResult
+
+```typescript
+interface ExecutionResult {
+  signature: string;
+  confirmationLevel: ConfirmationLevel;
+  slot: number;
+  error?: string;
+}
+```
+
+<ParamField path="signature" type="string">
+  Transaction signature (base58)
+</ParamField>
+
+<ParamField path="confirmationLevel" type="ConfirmationLevel">
+  Achieved confirmation level
+</ParamField>
+
+<ParamField path="slot" type="number">
+  Slot when transaction was processed
+</ParamField>
+
+<ParamField path="error" type="string">
+  Error code if transaction failed
+</ParamField>
+
+## Confirmation Levels
+
+```typescript
+type ConfirmationLevel = 'processed' | 'confirmed' | 'finalized';
+```
+
+- **`processed`** - Transaction processed but not confirmed
+- **`confirmed`** - Transaction confirmed by cluster (recommended for most use cases)
+- **`finalized`** - Transaction finalized and irreversible (recommended for high-value transactions)
+
+```typescript
+const result = await client.instructions.createUser(
+  { name: 'Alice' },
+  { 
+    wallet,
+    confirmationLevel: 'finalized',
+    timeout: 90000, // 90 seconds
+  }
+);
+```
+
+## Account Resolution
+
+HyperStack automatically resolves accounts based on their category.
+
+### AccountMeta
+
+```typescript
+interface AccountMeta {
+  name: string;
+  category: AccountCategory;
+  isMut: boolean;
+  isSigner: boolean;
+  pda?: PdaConfig;
+}
+```
+
+### Account Categories
+
+```typescript
+type AccountCategory = 
+  | 'signer'       // Resolved from wallet
+  | 'pda'          // Derived using PDA config
+  | 'account'      // User-provided via options.accounts
+  | 'literal';     // Hardcoded address
+```
+
+### Providing Accounts
+
+```typescript
+const result = await client.instructions.transferTokens(
+  { amount: 100 },
+  {
+    wallet,
+    accounts: {
+      mint: 'TokenMintAddress...',
+      destination: 'DestinationAddress...',
+    },
+  }
+);
+```
+
+## PDA Derivation
+
+Program Derived Addresses (PDAs) are automatically derived using seed definitions.
+
+### Creating PDAs
+
+```typescript
+import { pda, literal, account, arg, bytes } from '@hyperstack/core';
+
+// Define PDA factory
+const userPda = pda(
+  'YourProgramID...',
+  literal('user'),
+  account('authority'),
+  arg('userId', 'u64')
+);
+
+// Derive address
+const address = await userPda.derive({
+  accounts: { authority: wallet.publicKey },
+  args: { userId: 123 },
+});
+```
+
+### Seed Types
+
+#### literal()
+
+Static string seed.
+
+```typescript
+literal('user') // UTF-8 encoded "user"
+```
+
+#### account()
+
+Reference to an account address.
+
+```typescript
+account('authority') // 32-byte public key
+```
+
+#### arg()
+
+Reference to an instruction argument.
+
+```typescript
+arg('userId', 'u64')     // 8-byte unsigned integer
+arg('name')              // String (UTF-8 encoded)
+arg('mint', 'pubkey')    // 32-byte public key
+```
+
+**Supported types:**
+- `u8`, `u16`, `u32`, `u64`, `u128` - Unsigned integers
+- `i8`, `i16`, `i32`, `i64`, `i128` - Signed integers
+- `pubkey` - Public key (32 bytes)
+- String values are UTF-8 encoded
+
+#### bytes()
+
+Raw bytes seed.
+
+```typescript
+bytes(new Uint8Array([1, 2, 3, 4]))
+```
+
+### PdaFactory
+
+```typescript
+interface PdaFactory {
+  readonly seeds: readonly SeedDef[];
+  readonly programId: string;
+  program(programId: string): PdaFactory;
+  derive(context: PdaDeriveContext): Promise<string>;
+  deriveSync(context: PdaDeriveContext): string;
+}
+```
+
+#### derive()
+
+Asynchronously derive PDA address.
+
+```typescript
+const address = await userPda.derive({
+  accounts: { authority: 'AuthorityAddress...' },
+  args: { userId: 123 },
+  programId: 'OverrideProgramID...', // Optional
+});
+```
+
+#### deriveSync()
+
+Synchronously derive PDA address.
+
+```typescript
+const address = userPda.deriveSync({
+  accounts: { authority: 'AuthorityAddress...' },
+  args: { userId: 123 },
+});
+```
+
+#### program()
+
+Override the program ID.
+
+```typescript
+const testPda = userPda.program('TestProgramID...');
+```
+
+### Program PDAs
+
+Organize PDAs for a program.
+
+```typescript
+import { createProgramPdas, pda, literal, account, arg } from '@hyperstack/core';
+
+const pdas = createProgramPdas({
+  user: pda(
+    'ProgramID...',
+    literal('user'),
+    account('authority')
+  ),
+  
+  userStats: pda(
+    'ProgramID...',
+    literal('user-stats'),
+    account('user')
+  ),
+  
+  vault: pda(
+    'ProgramID...',
+    literal('vault'),
+    arg('mint', 'pubkey')
+  ),
+});
+
+// Derive addresses
+const userAddress = await pdas.user.derive({
+  accounts: { authority: wallet.publicKey },
+});
+
+const vaultAddress = await pdas.vault.derive({
+  args: { mint: 'MintAddress...' },
+});
+```
+
+## Low-Level PDA Functions
+
+### findProgramAddress()
+
+Asynchronously find a valid PDA.
+
+```typescript
+import { findProgramAddress } from '@hyperstack/core';
+
+const [address, bump] = await findProgramAddress(
+  [seed1, seed2, seed3],
+  'ProgramID...'
+);
+```
+
+### findProgramAddressSync()
+
+Synchronously find a valid PDA.
+
+```typescript
+import { findProgramAddressSync } from '@hyperstack/core';
+
+const [address, bump] = findProgramAddressSync(
+  [seed1, seed2, seed3],
+  'ProgramID...'
+);
+```
+
+### derivePda()
+
+Derive PDA with explicit bump seed.
+
+```typescript
+import { derivePda } from '@hyperstack/core';
+
+const address = derivePda(
+  [seed1, seed2],
+  bump,
+  'ProgramID...'
+);
+```
+
+## Wallet Adapters
+
+Implement the `WalletAdapter` interface to integrate with any wallet.
+
+```typescript
+interface WalletAdapter {
+  publicKey: string;
+  connected: boolean;
+  signAndSend(transaction: unknown): Promise<string>;
+  signTransaction?(transaction: unknown): Promise<unknown>;
+  signAllTransactions?(transactions: unknown[]): Promise<unknown[]>;
+}
+```
+
+### Example: Phantom Wallet
+
+```typescript
+import type { WalletAdapter } from '@hyperstack/core';
+
+class PhantomWalletAdapter implements WalletAdapter {
+  constructor(private phantom: any) {}
+
+  get publicKey(): string {
+    return this.phantom.publicKey.toBase58();
+  }
+
+  get connected(): boolean {
+    return this.phantom.isConnected;
+  }
+
+  async signAndSend(transaction: unknown): Promise<string> {
+    const { signature } = await this.phantom.signAndSendTransaction(transaction);
+    return signature;
+  }
+}
+
+const wallet = new PhantomWalletAdapter(window.solana);
+```
+
+## Bound Executor
+
+Create an executor bound to a specific wallet.
+
+```typescript
+import { createInstructionExecutor } from '@hyperstack/core';
+
+const executor = createInstructionExecutor(wallet);
+
+const result = await executor.execute(
+  handler,
+  { name: 'Alice' },
+  { confirmationLevel: 'confirmed' } // No need to pass wallet
+);
+```
+
+## Error Handling
+
+### parseInstructionError()
+
+Parse program errors from transaction failures.
+
+```typescript
+import { parseInstructionError } from '@hyperstack/core';
+
+try {
+  await client.instructions.createUser({ name: 'Alice' }, { wallet });
+} catch (error) {
+  const programError = parseInstructionError(error, handler.errors);
+  if (programError) {
+    console.error(`${programError.name}: ${programError.message}`);
+  }
+}
+```
+
+### formatProgramError()
+
+Format program error for display.
+
+```typescript
+import { formatProgramError } from '@hyperstack/core';
+
+const formatted = formatProgramError(programError);
+console.error(formatted);
+```
+
+## Helper Functions
+
+### Base58 Encoding
+
+```typescript
+import { encodeBase58, decodeBase58 } from '@hyperstack/core';
+
+const encoded = encodeBase58(new Uint8Array([1, 2, 3]));
+const decoded = decodeBase58(encoded);
+```
+
+### Instruction Data Serialization
+
+```typescript
+import { serializeInstructionData } from '@hyperstack/core';
+
+const data = serializeInstructionData(
+  discriminator,
+  args,
+  argsSchema
+);
+```
+
+### Confirmation Waiting
+
+```typescript
+import { waitForConfirmation } from '@hyperstack/core';
+
+const confirmation = await waitForConfirmation(
+  signature,
+  'confirmed',
+  60000
+);
+
+console.log('Confirmed at slot:', confirmation.slot);
+```
+
+## Type Exports
+
+```typescript
+import type {
+  // Execution
+  InstructionHandler,
+  InstructionDefinition,
+  ExecuteOptions,
+  ExecutionResult,
+  ConfirmationLevel,
+  BuiltInstruction,
+  
+  // Accounts
+  AccountMeta,
+  AccountCategory,
+  ResolvedAccount,
+  ResolvedAccounts,
+  AccountResolutionResult,
+  
+  // PDAs
+  PdaConfig,
+  PdaSeed,
+  SeedDef,
+  PdaDeriveContext,
+  PdaFactory,
+  ProgramPdas,
+  
+  // Wallet
+  WalletAdapter,
+  WalletState,
+  WalletConnectOptions,
+  
+  // Errors
+  ProgramError,
+  ErrorMetadata,
+  
+  // Serialization
+  ArgSchema,
+  ArgType,
+} from '@hyperstack/core';
+```
+
+## Best Practices
+
+1. **Use confirmation levels appropriately** - `'confirmed'` for most cases, `'finalized'` for high-value transactions
+2. **Handle errors gracefully** - Parse and display program errors to users
+3. **Provide accounts explicitly** - Pass all required accounts via `options.accounts`
+4. **Cache PDA factories** - Create PDA factories once and reuse them
+5. **Set reasonable timeouts** - Adjust based on network conditions
+6. **Refresh views after mutations** - Use `options.refresh` to update UI automatically
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="HyperStack Client" icon="plug" href="/sdks/typescript/client">
+    Learn how to configure instruction handlers
+  </Card>
+  <Card title="Working with Views" icon="eye" href="/sdks/typescript/views">
+    Query data after executing instructions
+  </Card>
+</CardGroup>

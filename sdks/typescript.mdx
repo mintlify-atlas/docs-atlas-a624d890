@@ -1,0 +1,379 @@
+---
+title: "TypeScript SDK"
+description: "Pure TypeScript SDK for real-time Solana data streaming"
+---
+
+The TypeScript SDK provides a framework-agnostic client for connecting to Hyperstack servers. Built on AsyncIterables, it works with Node.js, Bun, Deno, and all modern JavaScript runtimes.
+
+## Installation
+
+<CodeGroup>
+```bash npm
+npm install hyperstack-typescript
+```
+```bash yarn
+yarn add hyperstack-typescript
+```
+```bash pnpm
+pnpm add hyperstack-typescript
+```
+```bash bun
+bun add hyperstack-typescript
+```
+</CodeGroup>
+
+## Requirements
+
+- Node.js 16+ or any modern JavaScript runtime
+- A generated stack definition from the Hyperstack CLI
+
+## Quick Start
+
+### Connect to a Server
+
+```typescript
+import { HyperStack } from 'hyperstack-typescript';
+import { SETTLEMENT_GAME_STACK } from './generated/settlement-game-stack';
+
+const hs = await HyperStack.connect('wss://mainnet.hyperstack.xyz', {
+  stack: SETTLEMENT_GAME_STACK,
+});
+```
+
+### Stream Real-time Updates
+
+Use AsyncIterables to stream updates:
+
+```typescript
+// Stream all updates for a list view
+for await (const update of hs.views.settlementGame.list.watch()) {
+  if (update.type === 'upsert') {
+    console.log('Game updated:', update.key, update.data);
+  } else if (update.type === 'delete') {
+    console.log('Game deleted:', update.key);
+  }
+}
+
+// Stream updates for a specific entity
+for await (const update of hs.views.settlementGame.state.watch('game-123')) {
+  console.log('Game 123 updated:', update.data);
+}
+```
+
+### Rich Updates (Before/After)
+
+Track changes with before/after diffs:
+
+```typescript
+for await (const update of hs.views.settlementGame.list.watchRich()) {
+  if (update.type === 'updated') {
+    console.log('Changed from:', update.before);
+    console.log('Changed to:', update.after);
+  } else if (update.type === 'created') {
+    console.log('New game:', update.data);
+  } else if (update.type === 'deleted') {
+    console.log('Deleted game:', update.lastKnown);
+  }
+}
+```
+
+### One-Shot Queries
+
+Fetch current state without streaming:
+
+```typescript
+// Get all games
+const games = await hs.views.settlementGame.list.get();
+console.log(`Found ${games.length} games`);
+
+// Get a specific game
+const game = await hs.views.settlementGame.state.get('game-123');
+if (game) {
+  console.log('Game data:', game);
+}
+```
+
+### Synchronous Access
+
+Access cached data synchronously (if available):
+
+```typescript
+// Returns immediately with cached data or undefined
+const games = hs.views.settlementGame.list.getSync();
+const game = hs.views.settlementGame.state.getSync('game-123');
+```
+
+## API Reference
+
+### HyperStack
+
+Main client class with typed view accessors.
+
+#### Methods
+
+<ResponseField name="connect" type="static async (url: string, options: ConnectOptions) => HyperStack">
+  Connect to a HyperStack server.
+  
+  ```typescript
+  const hs = await HyperStack.connect('wss://mainnet.hyperstack.xyz', {
+    stack: MY_STACK,
+  });
+  ```
+</ResponseField>
+
+<ResponseField name="views" type="ViewAccessors">
+  Typed view accessors based on your stack definition.
+  
+  ```typescript
+  hs.views.settlementGame.list.watch()
+  hs.views.settlementGame.state.get('key')
+  ```
+</ResponseField>
+
+<ResponseField name="connectionState" type="ConnectionState">
+  Current connection state: `'connected'` | `'connecting'` | `'disconnected'` | `'error'`
+  
+  ```typescript
+  console.log(hs.connectionState);
+  ```
+</ResponseField>
+
+<ResponseField name="onConnectionStateChange" type="(callback: (state: ConnectionState) => void) => () => void">
+  Listen for connection state changes. Returns an unsubscribe function.
+  
+  ```typescript
+  const unsubscribe = hs.onConnectionStateChange((state) => {
+    console.log('Connection state:', state);
+  });
+  
+  // Later...
+  unsubscribe();
+  ```
+</ResponseField>
+
+<ResponseField name="disconnect" type="async () => void">
+  Disconnect from the server.
+  
+  ```typescript
+  await hs.disconnect();
+  ```
+</ResponseField>
+
+### Views
+
+Each view provides streaming and query methods.
+
+#### StateView (Keyed Entities)
+
+<ResponseField name="watch" type="(key: string) => AsyncIterable<Update<T>>">
+  Stream updates for a specific key.
+  
+  ```typescript
+  for await (const update of view.state.watch('game-123')) {
+    console.log(update.data);
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="watchRich" type="(key: string) => AsyncIterable<RichUpdate<T>>">
+  Stream rich updates with before/after diffs.
+  
+  ```typescript
+  for await (const update of view.state.watchRich('game-123')) {
+    if (update.type === 'updated') {
+      console.log('Before:', update.before);
+      console.log('After:', update.after);
+    }
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="get" type="async (key: string) => T | undefined">
+  Get entity by key.
+  
+  ```typescript
+  const game = await view.state.get('game-123');
+  ```
+</ResponseField>
+
+<ResponseField name="getSync" type="(key: string) => T | undefined">
+  Get entity synchronously from cache.
+  
+  ```typescript
+  const game = view.state.getSync('game-123');
+  ```
+</ResponseField>
+
+#### ListView (Collections)
+
+<ResponseField name="watch" type="() => AsyncIterable<Update<T>>">
+  Stream all updates.
+  
+  ```typescript
+  for await (const update of view.list.watch()) {
+    console.log(update.type, update.key, update.data);
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="watchRich" type="() => AsyncIterable<RichUpdate<T>>">
+  Stream rich updates with before/after diffs.
+  
+  ```typescript
+  for await (const update of view.list.watchRich()) {
+    console.log(update.type, update.key);
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="get" type="async () => T[]">
+  Get all entities.
+  
+  ```typescript
+  const games = await view.list.get();
+  ```
+</ResponseField>
+
+<ResponseField name="getSync" type="() => T[]">
+  Get all entities synchronously from cache.
+  
+  ```typescript
+  const games = view.list.getSync();
+  ```
+</ResponseField>
+
+### Update Types
+
+```typescript
+type Update<T> =
+  | { type: 'upsert'; key: string; data: T }
+  | { type: 'patch'; key: string; data: Partial<T> }
+  | { type: 'delete'; key: string };
+
+type RichUpdate<T> =
+  | { type: 'created'; key: string; data: T }
+  | { type: 'updated'; key: string; before: T; after: T; patch?: unknown }
+  | { type: 'deleted'; key: string; lastKnown?: T };
+```
+
+## Advanced Usage
+
+### Connection Management
+
+Monitor and manage the WebSocket connection:
+
+```typescript
+const hs = await HyperStack.connect('wss://mainnet.hyperstack.xyz', {
+  stack: MY_STACK,
+});
+
+// Check connection state
+if (hs.connectionState === 'connected') {
+  console.log('Ready to stream');
+}
+
+// Listen for changes
+const unsubscribe = hs.onConnectionStateChange((state) => {
+  if (state === 'disconnected') {
+    console.log('Connection lost, will auto-reconnect');
+  } else if (state === 'connected') {
+    console.log('Reconnected!');
+  }
+});
+
+// Cleanup
+await hs.disconnect();
+unsubscribe();
+```
+
+### Error Handling
+
+Handle errors in streams:
+
+```typescript
+try {
+  for await (const update of hs.views.settlementGame.list.watch()) {
+    // Process update
+  }
+} catch (error) {
+  console.error('Stream error:', error);
+  // Stream will auto-reconnect and resume
+}
+```
+
+### Multiple Concurrent Streams
+
+```typescript
+// Stream multiple views concurrently
+const [gamesStream, playersStream] = await Promise.all([
+  (async () => {
+    for await (const update of hs.views.games.list.watch()) {
+      console.log('Game update:', update);
+    }
+  })(),
+  (async () => {
+    for await (const update of hs.views.players.list.watch()) {
+      console.log('Player update:', update);
+    }
+  })(),
+]);
+```
+
+## Examples
+
+### Real-time Game Leaderboard
+
+```typescript
+import { HyperStack } from 'hyperstack-typescript';
+import { GAME_STACK } from './generated/game-stack';
+
+const hs = await HyperStack.connect('wss://mainnet.hyperstack.xyz', {
+  stack: GAME_STACK,
+});
+
+// Get initial leaderboard
+const players = await hs.views.players.list.get();
+const sorted = players.sort((a, b) => b.score - a.score);
+console.log('Top 10:', sorted.slice(0, 10));
+
+// Watch for score changes
+for await (const update of hs.views.players.list.watchRich()) {
+  if (update.type === 'updated') {
+    const scoreDiff = update.after.score - update.before.score;
+    console.log(`${update.key} scored ${scoreDiff} points!`);
+  }
+}
+```
+
+### Track Token Price Changes
+
+```typescript
+for await (const update of hs.views.tokens.list.watchRich()) {
+  if (update.type === 'updated') {
+    const prev = update.before.price;
+    const curr = update.after.price;
+    const change = ((curr - prev) / prev) * 100;
+    
+    if (Math.abs(change) > 1) {
+      console.log(`${update.key}: ${change.toFixed(2)}% change`);
+    }
+  }
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="React SDK" icon="react" href="/sdks/react">
+    Use the React SDK for hooks-based integration
+  </Card>
+  <Card title="CLI Reference" icon="terminal" href="/cli/commands">
+    Generate SDKs with the Hyperstack CLI
+  </Card>
+  <Card title="Stack API" icon="code" href="/concepts/stack-api">
+    Learn about the Stack API concepts
+  </Card>
+  <Card title="GitHub" icon="github" href="https://github.com/HyperTekOrg/hyperstack">
+    View source code and examples
+  </Card>
+</CardGroup>

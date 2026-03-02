@@ -1,0 +1,198 @@
+---
+title: Authentication
+description: Configure authentication to deploy and manage Hyperstack resources
+---
+
+# Authentication
+
+The Hyperstack CLI requires authentication to deploy stacks, manage builds, and generate SDKs from remote stacks.
+
+## Login
+
+Authenticate with your API key:
+
+```bash
+hs auth login
+```
+
+You'll be prompted to enter your API key. The key is securely stored in `~/.config/hyperstack/credentials.toml`.
+
+### Non-interactive Login
+
+Provide the API key directly (useful for CI/CD):
+
+```bash
+hs auth login --key YOUR_API_KEY
+```
+
+<Warning>
+  Never commit API keys to version control. Use environment variables or secure secret management in CI/CD.
+</Warning>
+
+## Getting an API Key
+
+1. Sign up at [usehyperstack.com](https://usehyperstack.com)
+2. Navigate to **Settings** → **API Keys**
+3. Create a new API key
+4. Copy the key (it's only shown once)
+
+## Check Authentication Status
+
+### Local Status (No API Call)
+
+```bash
+hs auth status
+```
+
+Shows whether credentials are stored locally:
+
+```
+Authenticated: Yes
+API Key: hs_••••••••••••1234
+Stored at: /home/user/.config/hyperstack/credentials.toml
+```
+
+### Verify with API
+
+```bash
+hs auth whoami
+```
+
+Makes an API call to verify the key and show user info:
+
+```
+Authenticated as: john@example.com
+Organization: Acme Inc
+Plan: Pro
+API Key: hs_••••••••••••1234
+```
+
+## Logout
+
+Remove stored credentials:
+
+```bash
+hs auth logout
+```
+
+This deletes the API key from `~/.config/hyperstack/credentials.toml`.
+
+## Using in CI/CD
+
+### GitHub Actions
+
+```yaml .github/workflows/deploy.yml
+name: Deploy Stack
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      
+      - name: Install Hyperstack CLI
+        run: cargo install hyperstack-cli
+      
+      - name: Authenticate
+        run: hs auth login --key ${{ secrets.HYPERSTACK_API_KEY }}
+      
+      - name: Deploy
+        run: hs up
+```
+
+### GitLab CI
+
+```yaml .gitlab-ci.yml
+deploy:
+  image: rust:latest
+  before_script:
+    - cargo install hyperstack-cli
+    - hs auth login --key $HYPERSTACK_API_KEY
+  script:
+    - hs up
+  only:
+    - main
+```
+
+### Environment Variables
+
+Alternatively, set the API key as an environment variable:
+
+```bash
+export HYPERSTACK_API_KEY=hs_your_api_key_here
+```
+
+The CLI will automatically use `HYPERSTACK_API_KEY` if present, falling back to stored credentials.
+
+## Credentials Storage
+
+### Location
+
+- **macOS/Linux**: `~/.config/hyperstack/credentials.toml`
+- **Windows**: `%APPDATA%\hyperstack\credentials.toml`
+
+### Format
+
+```toml credentials.toml
+api_key = "hs_your_api_key_here"
+```
+
+### Permissions
+
+The credentials file is created with `0600` permissions (owner read/write only) for security.
+
+## Security Best Practices
+
+1. **Never commit API keys** to version control
+2. **Rotate keys regularly** from the dashboard
+3. **Use separate keys** for different environments (development, staging, production)
+4. **Revoke keys immediately** if compromised
+5. **Use CI/CD secrets** for automated deployments
+
+## Troubleshooting
+
+### Invalid API Key
+
+```
+Error: Invalid API key
+```
+
+**Solutions:**
+- Verify the key is correct
+- Check if the key has been revoked
+- Generate a new key from the dashboard
+
+### Permission Denied
+
+```
+Error: Permission denied: ~/.config/hyperstack/credentials.toml
+```
+
+**Solutions:**
+```bash
+chmod 600 ~/.config/hyperstack/credentials.toml
+```
+
+### Network Errors
+
+```
+Error: Failed to connect to API
+```
+
+**Solutions:**
+- Check your internet connection
+- Verify firewall settings
+- Check if `api.usehyperstack.com` is accessible
+
+## Next Steps
+
+- [Create a new project](/cli/commands/create)
+- [Initialize an existing project](/cli/commands/init)
+- [Deploy your first stack](/cli/commands/up)

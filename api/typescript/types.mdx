@@ -1,0 +1,480 @@
+---
+title: TypeScript Types
+description: Core type definitions for HyperStack TypeScript client
+---
+
+Core type definitions used throughout the HyperStack TypeScript ecosystem.
+
+## Update Types
+
+<ResponseField name="Update<T>" type="type">
+  Entity update discriminated union
+  
+  ```typescript
+  type Update<T> =
+    | { type: 'upsert'; key: string; data: T }
+    | { type: 'patch'; key: string; data: Partial<T> }
+    | { type: 'delete'; key: string };
+  ```
+  
+  ### Variants
+  
+  <ParamField path="upsert" type="object">
+    Full entity created or replaced
+    - `type`: `'upsert'`
+    - `key`: Entity key
+    - `data`: Complete entity data
+  </ParamField>
+  
+  <ParamField path="patch" type="object">
+    Partial entity update
+    - `type`: `'patch'`
+    - `key`: Entity key
+    - `data`: Partial entity data (changed fields only)
+  </ParamField>
+  
+  <ParamField path="delete" type="object">
+    Entity deleted
+    - `type`: `'delete'`
+    - `key`: Entity key
+  </ParamField>
+  
+  ### Example
+  
+  ```typescript
+  for await (const update of view.watch()) {
+    switch (update.type) {
+      case 'upsert':
+        console.log('Created/replaced:', update.key, update.data);
+        break;
+      case 'patch':
+        console.log('Updated:', update.key, update.data);
+        break;
+      case 'delete':
+        console.log('Deleted:', update.key);
+        break;
+    }
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="RichUpdate<T>" type="type">
+  Rich update with before/after states
+  
+  ```typescript
+  type RichUpdate<T> =
+    | { type: 'created'; key: string; data: T }
+    | { type: 'updated'; key: string; before: T; after: T; patch?: unknown }
+    | { type: 'deleted'; key: string; lastKnown?: T };
+  ```
+  
+  ### Variants
+  
+  <ParamField path="created" type="object">
+    New entity created
+    - `type`: `'created'`
+    - `key`: Entity key
+    - `data`: Entity data
+  </ParamField>
+  
+  <ParamField path="updated" type="object">
+    Entity updated
+    - `type`: `'updated'`
+    - `key`: Entity key
+    - `before`: State before update
+    - `after`: State after update
+    - `patch`: Optional patch data
+  </ParamField>
+  
+  <ParamField path="deleted" type="object">
+    Entity deleted
+    - `type`: `'deleted'`
+    - `key`: Entity key
+    - `lastKnown`: Last known state (if available)
+  </ParamField>
+  
+  ### Example
+  
+  ```typescript
+  for await (const update of view.watchRich()) {
+    if (update.type === 'updated') {
+      console.log('Changed:', {
+        before: update.before,
+        after: update.after,
+      });
+    }
+  }
+  ```
+</ResponseField>
+
+## Connection Types
+
+<ResponseField name="ConnectionState" type="type">
+  WebSocket connection state
+  
+  ```typescript
+  type ConnectionState =
+    | 'disconnected'
+    | 'connecting'
+    | 'connected'
+    | 'reconnecting'
+    | 'error';
+  ```
+  
+  <ParamField path="disconnected" type="string">
+    Not connected to server
+  </ParamField>
+  
+  <ParamField path="connecting" type="string">
+    Attempting initial connection
+  </ParamField>
+  
+  <ParamField path="connected" type="string">
+    Successfully connected
+  </ParamField>
+  
+  <ParamField path="reconnecting" type="string">
+    Attempting to reconnect after disconnect
+  </ParamField>
+  
+  <ParamField path="error" type="string">
+    Connection error occurred
+  </ParamField>
+</ResponseField>
+
+<ResponseField name="HyperStackConfig" type="interface">
+  Client configuration
+  
+  ```typescript
+  interface HyperStackConfig {
+    websocketUrl?: string;
+    reconnectIntervals?: number[];
+    maxReconnectAttempts?: number;
+    initialSubscriptions?: Subscription[];
+    maxEntriesPerView?: number | null;
+  }
+  ```
+  
+  <ParamField path="websocketUrl" type="string">
+    WebSocket server URL
+  </ParamField>
+  
+  <ParamField path="reconnectIntervals" type="number[]" default="[1000, 2000, 4000, 8000, 16000]">
+    Reconnection backoff intervals in milliseconds
+  </ParamField>
+  
+  <ParamField path="maxReconnectAttempts" type="number" default="5">
+    Maximum reconnection attempts before giving up
+  </ParamField>
+  
+  <ParamField path="initialSubscriptions" type="Subscription[]">
+    Subscriptions to create on connect
+  </ParamField>
+  
+  <ParamField path="maxEntriesPerView" type="number | null" default="10000">
+    Maximum entities per view (null = unlimited)
+  </ParamField>
+</ResponseField>
+
+<ResponseField name="HyperStackOptions" type="interface">
+  Extended client options
+  
+  ```typescript
+  interface HyperStackOptions<TStack extends StackDefinition> {
+    stack: TStack;
+    autoReconnect?: boolean;
+    reconnectIntervals?: number[];
+    maxReconnectAttempts?: number;
+    validateFrames?: boolean;
+  }
+  ```
+</ResponseField>
+
+## Stack Definition Types
+
+<ResponseField name="StackDefinition" type="interface">
+  Definition of a HyperStack application
+  
+  ```typescript
+  interface StackDefinition {
+    readonly name: string;
+    readonly url: string;
+    readonly views: Record<string, ViewGroup>;
+    readonly schemas?: Record<string, Schema<unknown>>;
+    instructions?: Record<string, InstructionHandler>;
+  }
+  ```
+  
+  <ParamField path="name" type="string" required>
+    Stack identifier
+  </ParamField>
+  
+  <ParamField path="url" type="string" required>
+    WebSocket server URL
+  </ParamField>
+  
+  <ParamField path="views" type="Record<string, ViewGroup>" required>
+    Entity view definitions
+  </ParamField>
+  
+  <ParamField path="schemas" type="Record<string, Schema<unknown>>">
+    Optional validation schemas
+  </ParamField>
+  
+  <ParamField path="instructions" type="Record<string, InstructionHandler>">
+    Optional instruction handlers for mutations
+  </ParamField>
+</ResponseField>
+
+<ResponseField name="ViewGroup" type="interface">
+  Group of views for an entity type
+  
+  ```typescript
+  interface ViewGroup {
+    state?: ViewDef<unknown, 'state'>;
+    list?: ViewDef<unknown, 'list'>;
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="ViewDef" type="interface">
+  View definition
+  
+  ```typescript
+  interface ViewDef<T, TMode extends 'state' | 'list'> {
+    readonly mode: TMode;
+    readonly view: string;
+    readonly _entity?: T;
+  }
+  ```
+  
+  <ParamField path="mode" type="'state' | 'list'">
+    View mode
+  </ParamField>
+  
+  <ParamField path="view" type="string">
+    View identifier for subscriptions
+  </ParamField>
+  
+  <ParamField path="_entity" type="T">
+    Phantom type for entity inference
+  </ParamField>
+</ResponseField>
+
+## Subscription Types
+
+<ResponseField name="Subscription" type="interface">
+  Subscription configuration
+  
+  ```typescript
+  interface Subscription {
+    view: string;
+    key?: string;
+    partition?: string;
+    filters?: Record<string, string>;
+    take?: number;
+    skip?: number;
+  }
+  ```
+  
+  <ParamField path="view" type="string" required>
+    View identifier (e.g., 'users/list')
+  </ParamField>
+  
+  <ParamField path="key" type="string">
+    Specific entity key (for state views)
+  </ParamField>
+  
+  <ParamField path="partition" type="string">
+    Partition key for sharded views
+  </ParamField>
+  
+  <ParamField path="filters" type="Record<string, string>">
+    Filter criteria
+  </ParamField>
+  
+  <ParamField path="take" type="number">
+    Limit results
+  </ParamField>
+  
+  <ParamField path="skip" type="number">
+    Skip results (pagination)
+  </ParamField>
+</ResponseField>
+
+<ResponseField name="WatchOptions" type="interface">
+  Options for watching views
+  
+  ```typescript
+  interface WatchOptions<TSchema = unknown> {
+    take?: number;
+    skip?: number;
+    filters?: Record<string, string>;
+    schema?: Schema<TSchema>;
+  }
+  ```
+</ResponseField>
+
+## Schema Types
+
+<ResponseField name="Schema" type="interface">
+  Validation schema interface (Zod-compatible)
+  
+  ```typescript
+  interface Schema<T> {
+    safeParse: (input: unknown) => SchemaResult<T>;
+  }
+  ```
+  
+  ### Example with Zod
+  
+  ```typescript
+  import { z } from 'zod';
+  
+  const UserSchema = z.object({
+    id: z.string(),
+    name: z.string(),
+    email: z.string().email(),
+  });
+  
+  // UserSchema satisfies Schema<User>
+  ```
+</ResponseField>
+
+<ResponseField name="SchemaResult" type="type">
+  Result of schema validation
+  
+  ```typescript
+  type SchemaResult<T> =
+    | { success: true; data: T }
+    | { success: false; error: unknown };
+  ```
+</ResponseField>
+
+## Typed View Types
+
+<ResponseField name="TypedViews" type="type">
+  All typed views for a stack
+  
+  ```typescript
+  type TypedViews<TViews extends StackDefinition['views']> = {
+    [K in keyof TViews]: TypedViewGroup<TViews[K]>;
+  };
+  ```
+</ResponseField>
+
+<ResponseField name="TypedViewGroup" type="type">
+  Typed view group
+  
+  ```typescript
+  type TypedViewGroup<TGroup extends ViewGroup> = {
+    state?: TypedStateView<...>;
+    list?: TypedListView<...>;
+  };
+  ```
+</ResponseField>
+
+<ResponseField name="TypedStateView" type="interface">
+  Typed state view interface
+  
+  See [View Types](/api/typescript/views) for details.
+</ResponseField>
+
+<ResponseField name="TypedListView" type="interface">
+  Typed list view interface
+  
+  See [View Types](/api/typescript/views) for details.
+</ResponseField>
+
+## Callback Types
+
+<ResponseField name="SubscribeCallback" type="type">
+  Subscription callback
+  
+  ```typescript
+  type SubscribeCallback = (view: string) => void;
+  ```
+</ResponseField>
+
+<ResponseField name="UnsubscribeFn" type="type">
+  Unsubscribe function
+  
+  ```typescript
+  type UnsubscribeFn = () => void;
+  ```
+</ResponseField>
+
+<ResponseField name="ConnectionStateCallback" type="type">
+  Connection state change callback
+  
+  ```typescript
+  type ConnectionStateCallback = (
+    state: ConnectionState,
+    error?: Error
+  ) => void;
+  ```
+</ResponseField>
+
+## Constants
+
+<ResponseField name="DEFAULT_CONFIG" type="const">
+  Default client configuration
+  
+  ```typescript
+  const DEFAULT_CONFIG = {
+    reconnectIntervals: [1000, 2000, 4000, 8000, 16000],
+    maxReconnectAttempts: 5,
+    maxEntriesPerView: 10_000,
+  };
+  ```
+</ResponseField>
+
+<ResponseField name="DEFAULT_MAX_ENTRIES_PER_VIEW" type="const">
+  Default maximum entities per view
+  
+  ```typescript
+  const DEFAULT_MAX_ENTRIES_PER_VIEW = 10_000;
+  ```
+</ResponseField>
+
+## Error Types
+
+<ResponseField name="HyperStackError" type="class">
+  Custom error class for HyperStack operations
+  
+  ```typescript
+  class HyperStackError extends Error {
+    constructor(
+      message: string,
+      public code: string,
+      public details?: unknown
+    ) {
+      super(message);
+      this.name = 'HyperStackError';
+    }
+  }
+  ```
+  
+  ### Properties
+  
+  <ParamField path="code" type="string">
+    Error code for programmatic handling
+  </ParamField>
+  
+  <ParamField path="details" type="unknown">
+    Additional error details
+  </ParamField>
+  
+  ### Example
+  
+  ```typescript
+  try {
+    await client.connect();
+  } catch (error) {
+    if (error instanceof HyperStackError) {
+      console.error(`Error ${error.code}:`, error.message);
+      console.error('Details:', error.details);
+    }
+  }
+  ```
+</ResponseField>

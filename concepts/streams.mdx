@@ -1,0 +1,699 @@
+---
+title: Stream Definitions
+description: Learn how to define and structure Hyperstack streams
+---
+
+A **stream** is a declarative definition of your data pipeline written in Rust. This page explains how streams work and how to define them.
+
+## What is a Stream?
+
+A stream is a Rust module that defines:
+
+1. **Entities** - The data structures you want to track
+2. **Mappings** - How on-chain data flows into entities
+3. **Handlers** - Which blockchain events to process
+4. **IDL** - The program interface definitions
+
+Streams are compiled into an Abstract Syntax Tree (AST) that the Hyperstack runtime uses to process blockchain events.
+
+## Stream Structure
+
+### Basic Definition
+
+```rust
+#[hyperstack(idl = "path/to/idl.json")]
+pub mod my_stream {
+    use hyperstack::prelude::*;
+    
+    #[entity(name = "MyEntity")]
+    #[derive(Stream)]
+    pub struct MyEntity {
+        #[map(CreateIx::id, primary_key)]
+        pub id: String,
+        
+        #[map(Account::value)]
+        pub value: u64,
+    }
+}
+```
+
+**Required Components:**
+- `#[hyperstack(...)]` - Stream configuration
+- `pub mod { ... }` - Module containing entities
+- At least one entity with `#[entity]` and `#[derive(Stream)]`
+
+### Stream Attributes
+
+#### idl (required)
+
+Path to the Anchor IDL file:
+
+```rust
+#[hyperstack(idl = "programs/my-program/idl.json")]
+```
+
+The IDL provides:
+- Program ID
+- Account types and fields
+- Instruction types and arguments
+- Custom type definitions
+- Error codes
+
+#### Multiple IDLs
+
+For programs with multiple IDLs:
+
+```rust
+#[hyperstack(idls = [
+    "programs/program-a/idl.json",
+    "programs/program-b/idl.json",
+])]
+```
+
+## Stream Lifecycle
+
+### 1. Development
+
+Write stream definition using Rust macros:
+
+```rust
+#[hyperstack(idl = "idl.json")]
+pub mod token_stream {
+    #[entity(name = "Token")]
+    #[derive(Stream)]
+    pub struct Token {
+        // Field definitions...
+    }
+}
+```
+
+### 2. Compilation
+
+Run `cargo build` to generate the AST:
+
+```bash
+cargo build
+```
+
+**Generated Files:**
+- `.hyperstack/{StreamName}.stack.json` - Serialized AST
+- `target/debug/...` - Compiled Rust code
+
+**AST Structure:**
+```json
+{
+  "stack_name": "TokenStream",
+  "program_ids": ["ProgramID111..."],
+  "entities": [
+    {
+      "state_name": "Token",
+      "identity": { "primary_keys": ["mint"] },
+      "handlers": [...],
+      "sections": [...],
+      "field_mappings": {...}
+    }
+  ],
+  "content_hash": "sha256..."
+}
+```
+
+### 3. Deployment
+
+Deploy the AST to Hyperstack runtime:
+
+```bash
+hs up
+```
+
+This:
+1. Reads `.hyperstack/*.stack.json`
+2. Uploads to Hyperstack runtime
+3. Runtime compiles AST to bytecode
+4. Starts processing events
+
+### 4. Runtime Processing
+
+The runtime:
+1. Subscribes to Solana events via Yellowstone gRPC
+2. Routes events to entity handlers
+3. Executes bytecode to update entities
+4. Streams mutations to connected clients
+
+## Multi-Entity Streams
+
+Streams can define multiple entities:
+
+```rust
+#[hyperstack(idl = "idl.json")]
+pub mod trading_stream {
+    use hyperstack::prelude::*;
+    
+    #[entity(name = "Token")]
+    #[derive(Stream)]
+    pub struct Token {
+        #[map(CreateIx::mint, primary_key)]
+        pub mint: String,
+        
+        #[map(BondingCurve::virtual_sol_reserves)]
+        pub sol_reserves: u64,
+    }
+    
+    #[entity(name = "UserProfile")]
+    #[derive(Stream)]
+    pub struct UserProfile {
+        #[map(TradeIx::user, primary_key)]
+        pub user: String,
+        
+        #[aggregate(from = TradeIx, field = amount, strategy = Sum)]
+        pub total_volume: u64,
+    }
+    
+    #[entity(name = "Trade")]
+    #[derive(Stream)]
+    pub struct Trade {
+        #[map(TradeIx::signature, primary_key)]
+        pub signature: String,
+        
+        #[map(TradeIx::user)]
+        pub user: String,
+        
+        #[map(TradeIx::mint)]
+        pub mint: String,
+        
+        #[map(TradeIx::amount)]
+        pub amount: u64,
+    }
+}
+```
+
+**Benefits:**
+- Related entities in one stream
+- Share IDL and types
+- Deploy together as a unit
+
+## Handler Generation
+
+The `#[derive(Stream)]` macro generates handlers for each entity based on field mappings.
+
+### Example
+
+```rust
+#[entity(name = "Token")]
+#[derive(Stream)]
+pub struct Token {
+    #[map(CreateIx::mint, primary_key)]
+    pub mint: String,
+    
+    #[map(BondingCurve::virtual_sol_reserves)]
+    pub sol_reserves: u64,
+    
+    #[aggregate(from = BuyIx, field = amount, strategy = Sum)]
+    pub total_volume: u64,
+}
+```
+
+**Generated Handlers:**
+
+1. **CreateIx handler**: Extracts `mint` (primary key)
+2. **BondingCurve handler**: Extracts `sol_reserves`
+3. **BuyIx handler**: Sums `amount` into `total_volume`
+
+### Handler Routing
+
+The runtime routes events to handlers:
+
+```rust
+// Event arrives: BondingCurve account update
+event_type = "BondingCurve"
+
+// Runtime finds entities listening to BondingCurve
+entity_names = ["Token"]
+
+// Execute Token's BondingCurve handler
+execute_handler("Token", "BondingCurve", event_value)
+```
+
+## AST Structure
+
+The generated AST is a complete, language-agnostic representation of your stream.
+
+### SerializableStreamSpec
+
+```rust
+pub struct SerializableStreamSpec {
+    pub state_name: String,               // "Token"
+    pub program_id: Option<String>,       // "ProgramID111..."
+    pub idl: Option<IdlSnapshot>,         // Embedded IDL
+    pub identity: IdentitySpec,           // Primary key config
+    pub handlers: Vec<HandlerSpec>,       // Event handlers
+    pub sections: Vec<EntitySection>,     // Field groupings
+    pub field_mappings: BTreeMap<...>,    // Complete type info
+    pub resolver_specs: Vec<...>,         // Resolver configs
+    pub computed_field_specs: Vec<...>,   // Computed fields
+    pub content_hash: Option<String>,     // SHA256 hash
+}
+```
+
+### Handler Spec
+
+```rust
+pub struct HandlerSpec {
+    pub source: SourceSpec,                  // What event triggers this
+    pub key_resolution: KeyResolutionStrategy, // How to get primary key
+    pub mappings: Vec<FieldMapping>,         // Field extractions
+    pub conditions: Vec<Condition>,          // Filter conditions
+    pub emit: bool,                          // Emit mutations?
+}
+```
+
+### Key Resolution Strategies
+
+**Embedded**: Key extracted directly from event
+```rust
+pub enum KeyResolutionStrategy {
+    Embedded { primary_field: FieldPath },
+}
+```
+
+**Lookup**: Key resolved via index
+```rust
+Lookup { primary_field: FieldPath },
+```
+
+**Computed**: Key derived from multiple fields
+```rust
+Computed {
+    primary_field: FieldPath,
+    compute_partition: ComputeFunction,
+},
+```
+
+**Temporal**: Key resolved based on timestamp
+```rust
+TemporalLookup {
+    lookup_field: FieldPath,
+    timestamp_field: FieldPath,
+    index_name: String,
+},
+```
+
+## Content Hashing
+
+Each AST includes a deterministic content hash:
+
+```rust
+impl SerializableStreamSpec {
+    pub fn compute_content_hash(&self) -> String {
+        // SHA256 of canonical JSON (excluding hash field)
+        let json = serde_json::to_string(&self)?;
+        let hash = sha256(json);
+        hex::encode(hash)
+    }
+}
+```
+
+**Purpose:**
+- Deduplication: Same spec always produces same hash
+- Version tracking: Detect when spec changes
+- Caching: Avoid recompiling identical specs
+
+## Stack Spec (Multi-Entity)
+
+When you have multiple entities, they're bundled into a **stack spec**:
+
+```rust
+pub struct SerializableStackSpec {
+    pub stack_name: String,                // "TradingStream"
+    pub program_ids: Vec<String>,          // All program IDs
+    pub idls: Vec<IdlSnapshot>,            // All IDLs
+    pub entities: Vec<SerializableStreamSpec>, // All entities
+    pub pdas: BTreeMap<...>,               // PDA definitions
+    pub instructions: Vec<InstructionDef>, // Instruction defs for SDK
+    pub content_hash: Option<String>,      // Stack-level hash
+}
+```
+
+## Advanced Features
+
+### PDA Definitions
+
+Define PDAs for SDK generation:
+
+```rust
+#[hyperstack(idl = "idl.json")]
+pub mod my_stream {
+    #[pda(
+        name = "bonding_curve",
+        seeds = [
+            literal("bonding-curve"),
+            arg("mint"),
+        ]
+    )]
+    pub fn bonding_curve_pda() {}
+    
+    // Entities...
+}
+```
+
+**Generated SDK:**
+```typescript
+const [bondingCurve] = PublicKey.findProgramAddressSync(
+  [Buffer.from("bonding-curve"), mint.toBuffer()],
+  PROGRAM_ID
+);
+```
+
+### Instruction Definitions
+
+Define instructions for SDK transaction builders:
+
+```rust
+#[instruction(
+    name = "buy",
+    accounts = [
+        account("user", signer = true, writable = true),
+        account("mint", writable = false),
+        account("bonding_curve", pda_ref = "bonding_curve", writable = true),
+    ],
+    args = [
+        arg("amount", type = "u64"),
+    ]
+)]
+pub fn buy_instruction() {}
+```
+
+**Generated SDK:**
+```typescript
+const ix = await stack.transactions.buy.build({
+  amount: 1000n,
+  // Accounts auto-resolved
+});
+```
+
+### View Definitions
+
+Define custom views with transformations:
+
+```rust
+#[view(
+    name = "top_traders",
+    source = "UserProfile",
+    transforms = [
+        sort_by("total_volume", desc),
+        take(10),
+    ]
+)]
+pub fn top_traders_view() {}
+```
+
+**Client SDK:**
+```typescript
+const { data } = stack.views.top_traders.use();
+// Returns top 10 traders by volume
+```
+
+## Type Generation
+
+The AST includes complete type information for SDK generation:
+
+```rust
+pub struct FieldTypeInfo {
+    pub field_name: String,           // "sol_reserves"
+    pub rust_type_name: String,       // "u64"
+    pub base_type: BaseType,          // Integer
+    pub is_optional: bool,            // false
+    pub is_array: bool,               // false
+    pub inner_type: Option<String>,   // None
+    pub emit: bool,                   // true
+}
+```
+
+**TypeScript Generation:**
+```typescript
+interface Token {
+  mint: string;           // from Rust String
+  sol_reserves: number;   // from Rust u64
+  total_volume: bigint;   // from Rust u128
+  trades: TradeEvent[];   // from Rust Vec<TradeEvent>
+}
+```
+
+## Error Handling
+
+### Compile-Time Errors
+
+The macro validates your stream at compile time:
+
+```rust
+#[entity(name = "Token")]
+#[derive(Stream)]
+pub struct Token {
+    // ERROR: No primary key defined
+    #[map(BondingCurve::value)]
+    pub value: u64,
+}
+```
+
+```
+error: Entity must have exactly one field with `primary_key` attribute
+```
+
+### Runtime Errors
+
+The VM handles runtime errors gracefully:
+
+- **Missing fields**: Use default values or skip update
+- **Type mismatches**: Log warning, skip field
+- **PDA lookup failures**: Queue update for later processing
+- **Staleness**: Reject out-of-order updates silently
+
+## Best Practices
+
+### Stream Organization
+
+<Note>
+  **Recommendations:**
+  - One stream per program (or related set of programs)
+  - Group related entities in the same stream
+  - Use descriptive entity names (PascalCase)
+  - Keep streams focused and cohesive
+</Note>
+
+### Module Structure
+
+```rust
+// Good: Single focused stream
+#[hyperstack(idl = "token-program/idl.json")]
+pub mod token_stream {
+    #[entity(name = "Token")]
+    pub struct Token { ... }
+    
+    #[entity(name = "UserProfile")]
+    pub struct UserProfile { ... }
+}
+
+// Avoid: Unrelated entities in one stream
+#[hyperstack(idls = ["token/idl.json", "nft/idl.json", "defi/idl.json"])]
+pub mod everything_stream {
+    // Too broad
+}
+```
+
+### IDL Management
+
+```rust
+// Good: Relative path from workspace root
+#[hyperstack(idl = "programs/my-program/idl.json")]
+
+// Avoid: Absolute paths
+#[hyperstack(idl = "/home/user/project/idl.json")]
+```
+
+### Entity Naming
+
+```rust
+// Good: Descriptive, singular nouns
+#[entity(name = "Token")]
+#[entity(name = "UserProfile")]
+#[entity(name = "TradingSession")]
+
+// Avoid: Plural, vague, or generic names
+#[entity(name = "Tokens")]
+#[entity(name = "Data")]
+#[entity(name = "Thing")]
+```
+
+## Examples
+
+### Simple Token Stream
+
+```rust
+#[hyperstack(idl = "programs/token/idl.json")]
+pub mod token_stream {
+    use hyperstack::prelude::*;
+    
+    #[entity(name = "Token")]
+    #[derive(Stream)]
+    pub struct Token {
+        #[map(CreateIx::mint, primary_key)]
+        pub mint: String,
+        
+        #[map(BondingCurve::virtual_sol_reserves)]
+        pub sol_reserves: u64,
+        
+        #[aggregate(from = BuyIx, field = amount, strategy = Sum)]
+        pub total_volume: u64,
+    }
+}
+```
+
+### Multi-Entity Trading Stream
+
+```rust
+#[hyperstack(idl = "programs/trading/idl.json")]
+pub mod trading_stream {
+    use hyperstack::prelude::*;
+    
+    // Tokens being traded
+    #[entity(name = "Token")]
+    #[derive(Stream)]
+    pub struct Token {
+        pub id: TokenId,
+        pub reserves: Reserves,
+        pub trading: TradingMetrics,
+    }
+    
+    pub struct TokenId {
+        #[map(CreateIx::mint, primary_key)]
+        pub mint: String,
+        
+        #[map(BondingCurve::mint, lookup_index)]
+        pub mint_lookup: String,
+    }
+    
+    pub struct Reserves {
+        #[map(BondingCurve::virtual_sol_reserves)]
+        pub sol: u64,
+        
+        #[map(BondingCurve::virtual_token_reserves)]
+        pub token: u64,
+    }
+    
+    pub struct TradingMetrics {
+        #[aggregate(from = BuyIx, field = sol_amount, strategy = Sum)]
+        #[aggregate(from = SellIx, field = sol_amount, strategy = Sum)]
+        pub total_volume: u64,
+        
+        #[aggregate(from = BuyIx, strategy = Count)]
+        #[aggregate(from = SellIx, strategy = Count)]
+        pub trade_count: u64,
+    }
+    
+    // User trading profiles
+    #[entity(name = "UserProfile")]
+    #[derive(Stream)]
+    pub struct UserProfile {
+        #[map(TradeIx::user, primary_key)]
+        pub user: String,
+        
+        #[aggregate(from = TradeIx, field = amount, strategy = Sum)]
+        pub total_volume: u64,
+        
+        #[aggregate(from = TradeIx, strategy = Count)]
+        pub trade_count: u64,
+    }
+    
+    // Individual trades
+    #[entity(name = "Trade")]
+    #[derive(Stream)]
+    pub struct Trade {
+        #[map(TradeIx::signature, primary_key)]
+        pub signature: String,
+        
+        #[map(TradeIx::user)]
+        pub user: String,
+        
+        #[map(TradeIx::mint)]
+        pub mint: String,
+        
+        #[map(TradeIx::amount)]
+        pub amount: u64,
+        
+        #[map(TradeIx::timestamp)]
+        pub timestamp: i64,
+    }
+}
+```
+
+### Cross-Program Stream
+
+```rust
+#[hyperstack(idls = [
+    "programs/token/idl.json",
+    "programs/metadata/idl.json",
+])]
+pub mod enriched_token_stream {
+    use hyperstack::prelude::*;
+    
+    #[entity(name = "Token")]
+    #[derive(Stream)]
+    pub struct Token {
+        // From token program
+        #[map(token::CreateIx::mint, primary_key)]
+        pub mint: String,
+        
+        #[map(token::BondingCurve::virtual_sol_reserves)]
+        pub sol_reserves: u64,
+        
+        // From metadata program
+        #[map(metadata::Metadata::name)]
+        pub name: Option<String>,
+        
+        #[map(metadata::Metadata::symbol)]
+        pub symbol: Option<String>,
+    }
+}
+```
+
+## Debugging
+
+### View Generated AST
+
+Inspect the generated AST:
+
+```bash
+cat .hyperstack/MyStream.stack.json | jq
+```
+
+### Validate AST
+
+Check AST structure:
+
+```bash
+hs validate .hyperstack/MyStream.stack.json
+```
+
+### Test Locally
+
+Run stream against local events:
+
+```bash
+hs test --stream .hyperstack/MyStream.stack.json --events test-events.json
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Entities" icon="cube" href="/concepts/entities">
+    Define entity structures
+  </Card>
+  <Card title="Mappings" icon="arrows-left-right" href="/concepts/mappings">
+    Map on-chain data to fields
+  </Card>
+  <Card title="Stacks" icon="layer-group" href="/concepts/stacks">
+    Use streams in your app
+  </Card>
+  <Card title="Deployment" icon="rocket" href="/deployment/quickstart">
+    Deploy your stream
+  </Card>
+</CardGroup>

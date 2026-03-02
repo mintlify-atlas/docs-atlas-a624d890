@@ -1,0 +1,585 @@
+---
+title: Monitoring and Observability
+description: Monitor HyperStack server with metrics, logs, and distributed tracing
+---
+
+The HyperStack server provides comprehensive observability through structured logging, health checks, and optional OpenTelemetry integration.
+
+## Logging
+
+### Structured Logs
+
+The server uses the `tracing` crate for structured logging with hierarchical spans.
+
+**Configuration**:
+
+```rust
+use hyperstack_server::telemetry::{TelemetryConfig, init};
+
+// Text logs (human-readable)
+let config = TelemetryConfig::new("hyperstack-server")
+    .with_json_logs(false);
+
+init(config)?;
+
+// JSON logs (machine-parsable)
+let config = TelemetryConfig::new("hyperstack-server")
+    .with_json_logs(true);
+
+init(config)?;
+```
+
+### Log Levels
+
+Control verbosity with the `RUST_LOG` environment variable:
+
+```bash
+# Info level for all
+RUST_LOG=info
+
+# Debug for server, trace for interpreter
+RUST_LOG=hyperstack_server=debug,hyperstack_interpreter=trace
+
+# Fine-grained control
+RUST_LOG=info,hyperstack_server::projector=debug,hyperstack_server::websocket=trace
+```
+
+### Log Format
+
+**Text Format**:
+```
+2024-01-15T10:30:45.123Z INFO hyperstack_server::runtime: Starting HyperStack runtime
+2024-01-15T10:30:45.456Z INFO hyperstack_server::websocket::server: WebSocket server listening on [::]:8877
+2024-01-15T10:30:46.789Z DEBUG hyperstack_server::projector: Projector started
+```
+
+**JSON Format**:
+```json
+{
+  "timestamp": "2024-01-15T10:30:45.123Z",
+  "level": "INFO",
+  "target": "hyperstack_server::runtime",
+  "message": "Starting HyperStack runtime",
+  "span": {
+    "name": "runtime"
+  }
+}
+```
+
+### Key Log Events
+
+**Startup**:
+```
+Starting HyperStack runtime
+Health monitoring enabled
+WebSocket server listening on [::]:8877
+HTTP health server running on dedicated thread at 0.0.0.0:8081
+Projector started
+Starting Vixen parser runtime for program: <program_id>
+```
+
+**Client Connections**:
+```
+New WebSocket connection from 192.168.1.100:54321 (1/10000 clients)
+WebSocket connection established for client <uuid>
+Client <uuid> subscribed to Token/list (mode: List)
+```
+
+**Processing**:
+```
+frontend.phase: "projector"
+frontend.batch_size: 10
+frontend.frames_published: 8
+frontend.opcodes: 245
+```
+
+**Errors**:
+```
+ERROR hyperstack_server::projector: Failed to process mutation: <error>
+WARN hyperstack_server::health: Stream appears to be stale - no recent events
+ERROR hyperstack_server::websocket: WebSocket connection error: <error>
+```
+
+## Health Checks
+
+### HTTP Endpoints
+
+**GET /health** - Liveness probe
+- Always returns 200 OK
+- Indicates process is running
+- Response: `{"status": "ok"}`
+
+**GET /ready** - Readiness probe  
+- Returns 200 if stream is healthy, 503 if unhealthy
+- Checks stream connectivity and recent events
+- Response: `{"ready": true/false}`
+
+### Health Status
+
+```rust
+pub enum StreamStatus {
+    Connected,
+    Disconnected,
+    Reconnecting,
+    Error(String),
+}
+```
+
+**Healthy Conditions**:
+- Status is `Connected`
+- Received event within last 60 seconds (2x heartbeat interval)
+- OR actively reconnecting
+
+**Unhealthy Conditions**:
+- Status is `Disconnected`
+- Status is `Error`
+- No events received for >60 seconds while connected
+
+### Programmatic Access
+
+```rust
+let monitor = HealthMonitor::new(HealthConfig::default());
+let _health_task = monitor.start().await;
+
+// Check health
+if !monitor.is_healthy().await {
+    eprintln!("Stream is unhealthy!");
+}
+
+// Get status
+match monitor.status().await {
+    StreamStatus::Connected => println!("Connected"),
+    StreamStatus::Error(err) => eprintln!("Error: {}", err),
+    _ => {},
+}
+
+// Track events
+monitor.record_event().await;         // Mark event received
+monitor.record_connection().await;     // Mark connected
+monitor.record_disconnection().await;  // Mark disconnected
+monitor.record_reconnecting().await;   // Mark reconnecting
+monitor.record_error("timeout".into()).await; // Record error
+```
+
+## OpenTelemetry
+
+### Enable OTEL Feature
+
+**Cargo.toml**:
+```toml
+[dependencies]
+hyperstack-server = { version = "0.5", features = ["otel"] }
+```
+
+**Build**:
+```bash
+cargo build --release --features otel
+```
+
+### Configuration
+
+```rust
+use hyperstack_server::telemetry::{TelemetryConfig, init_with_otel};
+
+let config = TelemetryConfig::new("hyperstack-server")
+    .with_json_logs(true)
+    .with_otlp_endpoint("http://localhost:4317");
+
+let _guard = init_with_otel(config)?;
+
+// Guard ensures proper shutdown
+// Drop it when exiting to flush traces
+```
+
+### Environment Variables
+
+```bash
+# OTLP endpoint
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+
+# Service name
+OTEL_SERVICE_NAME=hyperstack-server
+
+# Resource attributes
+OTEL_RESOURCE_ATTRIBUTES=environment=production,version=0.5.3
+```
+
+### Metrics
+
+With the `otel` feature enabled, the server exports these metrics:
+
+**WebSocket Metrics**:
+- `ws_connections_total` - Total connections established
+- `ws_disconnections_total` - Total disconnections
+- `ws_connection_duration_seconds` - Connection duration histogram
+- `ws_messages_sent_total` - Messages sent to clients
+- `ws_messages_received_total` - Messages received from clients
+
+**Subscription Metrics**:
+- `subscriptions_created_total{view}` - Subscriptions created per view
+- `subscriptions_removed_total{view}` - Subscriptions removed per view
+
+**Projector Metrics**:
+- `mutations_processed_total{entity}` - Mutations processed per entity
+- `frames_published_total{mode,entity}` - Frames published per mode/entity
+- `projector_latency_seconds` - Mutation batch processing latency
+
+**VM Metrics**:
+- `state_table_evictions_total{entity}` - LRU evictions per entity
+- `state_table_at_capacity{entity}` - State table capacity warnings
+- `path_cache_hits_total` - Path cache hits
+- `path_cache_misses_total` - Path cache misses
+
+**Implementation**:
+
+See `metrics.rs:1-200` for the full Metrics struct:
+
+```rust
+use hyperstack_server::Metrics;
+
+let metrics = Metrics::new();
+
+// Record metrics
+metrics.record_ws_connection();
+metrics.record_subscription_created("Token/list");
+metrics.record_mutation_processed("Token");
+metrics.record_projector_latency(duration_ms);
+```
+
+### Traces
+
+The server creates distributed trace spans for:
+
+**Runtime Components**:
+- `runtime` - Overall runtime
+- `projector` - Projector task
+- `ws.server` - WebSocket server
+- `vixen.parser` - Parser runtime
+- `bus.cleanup` - Bus cleanup task
+
+**Per-Request Spans**:
+- `ws.connection` - WebSocket connection handler
+- `ws.subscribe.state` - State subscription
+- `ws.subscribe.list` - List subscription
+- `ws.subscribe.derived` - Derived view subscription
+- `projector.mutation` - Mutation processing
+- `projector.publish` - Frame publishing
+- `vm.process_event` - VM event processing
+
+**Example Trace**:
+```
+runtime
+├─ ws.server
+│  └─ ws.connection
+│     ├─ ws.subscribe.list {view="Token/list"}
+│     └─ ws.subscribe.state {view="Token/state", key="abc"}
+├─ projector
+│  └─ projector.mutation {entity="Token"}
+│     └─ projector.publish {view="Token/list", mode="list"}
+└─ vixen.parser {program="TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"}
+   └─ vm.process_event {event_type="TransferIxState", slot=12345}
+```
+
+## Jaeger Integration
+
+### Docker Compose
+
+```yaml
+version: '3.8'
+
+services:
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - "16686:16686"  # UI
+      - "4317:4317"    # OTLP gRPC
+      - "4318:4318"    # OTLP HTTP
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+
+  hyperstack-server:
+    build:
+      context: .
+      args:
+        - FEATURES=otel
+    environment:
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
+      - OTEL_SERVICE_NAME=hyperstack-server
+    depends_on:
+      - jaeger
+```
+
+Access Jaeger UI at http://localhost:16686
+
+## Prometheus Integration
+
+### Exporter
+
+The server doesn't include a built-in Prometheus exporter. Use the OpenTelemetry Collector to convert OTLP metrics to Prometheus format.
+
+**otel-collector-config.yaml**:
+```yaml
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+exporters:
+  prometheus:
+    endpoint: "0.0.0.0:9090"
+  logging:
+    loglevel: debug
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      exporters: [prometheus, logging]
+    traces:
+      receivers: [otlp]
+      exporters: [logging]
+```
+
+### Prometheus Scrape Config
+
+```yaml
+scrape_configs:
+  - job_name: 'otel-collector'
+    static_configs:
+      - targets: ['otel-collector:9090']
+```
+
+## Grafana Dashboards
+
+### WebSocket Connections
+
+```json
+{
+  "title": "WebSocket Connections",
+  "panels": [
+    {
+      "title": "Active Connections",
+      "targets": [
+        {
+          "expr": "ws_connections_total - ws_disconnections_total"
+        }
+      ]
+    },
+    {
+      "title": "Connection Rate",
+      "targets": [
+        {
+          "expr": "rate(ws_connections_total[5m])"
+        }
+      ]
+    },
+    {
+      "title": "Connection Duration",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, ws_connection_duration_seconds)"
+        }
+      ]
+    }
+  ]
+}
+```
+
+### Projector Performance
+
+```json
+{
+  "title": "Projector Performance",
+  "panels": [
+    {
+      "title": "Mutations Processed",
+      "targets": [
+        {
+          "expr": "rate(mutations_processed_total[1m])"
+        }
+      ]
+    },
+    {
+      "title": "Processing Latency (p99)",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, projector_latency_seconds)"
+        }
+      ]
+    },
+    {
+      "title": "Frames Published by Mode",
+      "targets": [
+        {
+          "expr": "sum by (mode) (rate(frames_published_total[1m]))"
+        }
+      ]
+    }
+  ]
+}
+```
+
+### VM Metrics
+
+```json
+{
+  "title": "VM Performance",
+  "panels": [
+    {
+      "title": "State Table Evictions",
+      "targets": [
+        {
+          "expr": "rate(state_table_evictions_total[5m])"
+        }
+      ]
+    },
+    {
+      "title": "Path Cache Hit Rate",
+      "targets": [
+        {
+          "expr": "path_cache_hits_total / (path_cache_hits_total + path_cache_misses_total)"
+        }
+      ]
+    }
+  ]
+}
+```
+
+## Alerts
+
+### Prometheus Alerting Rules
+
+```yaml
+groups:
+  - name: hyperstack-server
+    interval: 30s
+    rules:
+      # High error rate
+      - alert: HighErrorRate
+        expr: rate(ws_connection_errors_total[5m]) > 0.1
+        for: 5m
+        annotations:
+          summary: "High WebSocket error rate"
+          description: "Error rate is {{ $value }} errors/sec"
+
+      # Stream unhealthy
+      - alert: StreamUnhealthy
+        expr: up{job="hyperstack-server"} == 0
+        for: 2m
+        annotations:
+          summary: "HyperStack server is down"
+
+      # High memory usage
+      - alert: HighMemoryUsage
+        expr: process_resident_memory_bytes > 4e9
+        for: 10m
+        annotations:
+          summary: "High memory usage (>4GB)"
+
+      # State table evictions
+      - alert: HighEvictionRate
+        expr: rate(state_table_evictions_total[5m]) > 10
+        for: 5m
+        annotations:
+          summary: "High state table eviction rate"
+          description: "Evicting {{ $value }} entities/sec - consider increasing max_entries"
+```
+
+## Log Aggregation
+
+### ELK Stack
+
+**Filebeat**:
+```yaml
+filebeat.inputs:
+  - type: container
+    paths:
+      - /var/lib/docker/containers/*/*.log
+    processors:
+      - add_kubernetes_metadata:
+          host: ${NODE_NAME}
+          matchers:
+          - logs_path:
+              logs_path: "/var/log/containers/"
+
+output.elasticsearch:
+  hosts: ["elasticsearch:9200"]
+  index: "hyperstack-logs-%{+yyyy.MM.dd}"
+
+setup.kibana:
+  host: "kibana:5601"
+```
+
+### CloudWatch Logs
+
+**AWS ECS**:
+```json
+{
+  "logConfiguration": {
+    "logDriver": "awslogs",
+    "options": {
+      "awslogs-group": "/ecs/hyperstack-server",
+      "awslogs-region": "us-east-1",
+      "awslogs-stream-prefix": "ecs"
+    }
+  }
+}
+```
+
+**Query Examples**:
+```
+# Find errors
+fields @timestamp, @message
+| filter @message like /ERROR/
+| sort @timestamp desc
+| limit 100
+
+# Connection stats
+fields @timestamp
+| filter @message like /subscribed/
+| stats count() by bin(5m)
+```
+
+## Performance Profiling
+
+### CPU Profiling
+
+```bash
+# Using perf
+perf record -F 99 -p $(pgrep hyperstack-server) -g -- sleep 30
+perf report
+
+# Using flamegraph
+cargo install flamegraph
+sudo flamegraph -p $(pgrep hyperstack-server)
+```
+
+### Memory Profiling
+
+```bash
+# Using heaptrack
+heaptrack ./target/release/hyperstack-server
+heaptrack_gui heaptrack.hyperstack-server.*.gz
+
+# Using valgrind
+valgrind --tool=massif ./target/release/hyperstack-server
+ms_print massif.out.*
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Deployment" icon="rocket" href="/server/deployment">
+    Deploy to production
+  </Card>
+  <Card title="Configuration" icon="sliders" href="/server/configuration">
+    Configure monitoring
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/server/architecture">
+    Understand the architecture
+  </Card>
+  <Card title="WebSocket Protocol" icon="plug" href="/server/websocket-protocol">
+    Learn the protocol
+  </Card>
+</CardGroup>

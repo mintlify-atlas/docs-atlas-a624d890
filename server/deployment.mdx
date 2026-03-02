@@ -1,0 +1,594 @@
+---
+title: Deployment Guide
+description: Deploy HyperStack server to production environments
+---
+
+This guide covers deploying the HyperStack server to various production environments.
+
+## Docker
+
+### Dockerfile
+
+Create a multi-stage Dockerfile for optimized image size:
+
+```dockerfile
+# Build stage
+FROM rust:1.75 as builder
+
+WORKDIR /app
+
+# Copy manifests
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
+
+# Build with release profile
+RUN cargo build --release
+
+# Runtime stage
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY --from=builder /app/target/release/hyperstack-server /usr/local/bin/
+
+EXPOSE 8877 8081
+
+CMD ["hyperstack-server"]
+```
+
+### With OpenTelemetry
+
+```dockerfile
+# Build with otel feature
+RUN cargo build --release --features otel
+```
+
+### Docker Compose
+
+```yaml
+version: '3.8'
+
+services:
+  hyperstack-server:
+    build: .
+    ports:
+      - "8877:8877"  # WebSocket
+      - "8081:8081"  # Health
+    environment:
+      - RUST_LOG=info,hyperstack_server=debug
+      - YELLOWSTONE_ENDPOINT=http://yellowstone:10000
+      - YELLOWSTONE_TOKEN=${YELLOWSTONE_TOKEN}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Optional: Jaeger for tracing
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - "16686:16686"  # UI
+      - "4317:4317"    # OTLP gRPC
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+```
+
+## Kubernetes
+
+### Deployment
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hyperstack-server
+  namespace: hyperstack
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: hyperstack-server
+  template:
+    metadata:
+      labels:
+        app: hyperstack-server
+    spec:
+      containers:
+      - name: server
+        image: hyperstack-server:v0.5.3
+        ports:
+        - containerPort: 8877
+          name: websocket
+          protocol: TCP
+        - containerPort: 8081
+          name: health
+          protocol: TCP
+        env:
+        - name: RUST_LOG
+          value: "info,hyperstack_server=debug"
+        - name: YELLOWSTONE_ENDPOINT
+          valueFrom:
+            configMapKeyRef:
+              name: hyperstack-config
+              key: yellowstone_endpoint
+        - name: YELLOWSTONE_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: hyperstack-secrets
+              key: yellowstone_token
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: health
+          initialDelaySeconds: 10
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: health
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 2
+```
+
+### Service
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: hyperstack-server
+  namespace: hyperstack
+spec:
+  type: LoadBalancer
+  selector:
+    app: hyperstack-server
+  ports:
+  - name: websocket
+    port: 8877
+    targetPort: 8877
+    protocol: TCP
+  - name: health
+    port: 8081
+    targetPort: 8081
+    protocol: TCP
+```
+
+### ConfigMap
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hyperstack-config
+  namespace: hyperstack
+data:
+  yellowstone_endpoint: "https://api.mainnet-beta.solana.com"
+```
+
+### Secret
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: hyperstack-secrets
+  namespace: hyperstack
+type: Opaque
+stringData:
+  yellowstone_token: "your-token-here"
+```
+
+### HorizontalPodAutoscaler
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: hyperstack-server-hpa
+  namespace: hyperstack
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: hyperstack-server
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+```
+
+## AWS ECS
+
+### Task Definition
+
+```json
+{
+  "family": "hyperstack-server",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "1024",
+  "memory": "2048",
+  "containerDefinitions": [
+    {
+      "name": "hyperstack-server",
+      "image": "123456789.dkr.ecr.us-east-1.amazonaws.com/hyperstack-server:v0.5.3",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 8877,
+          "protocol": "tcp"
+        },
+        {
+          "containerPort": 8081,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        {
+          "name": "RUST_LOG",
+          "value": "info,hyperstack_server=debug"
+        }
+      ],
+      "secrets": [
+        {
+          "name": "YELLOWSTONE_TOKEN",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:123456789:secret:yellowstone-token"
+        }
+      ],
+      "healthCheck": {
+        "command": ["CMD-SHELL", "curl -f http://localhost:8081/health || exit 1"],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 60
+      },
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/hyperstack-server",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ]
+}
+```
+
+### Service Definition
+
+```json
+{
+  "serviceName": "hyperstack-server",
+  "cluster": "hyperstack-cluster",
+  "taskDefinition": "hyperstack-server:1",
+  "desiredCount": 3,
+  "launchType": "FARGATE",
+  "networkConfiguration": {
+    "awsvpcConfiguration": {
+      "subnets": ["subnet-123", "subnet-456"],
+      "securityGroups": ["sg-789"],
+      "assignPublicIp": "ENABLED"
+    }
+  },
+  "loadBalancers": [
+    {
+      "targetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:123456789:targetgroup/hyperstack-ws",
+      "containerName": "hyperstack-server",
+      "containerPort": 8877
+    }
+  ],
+  "healthCheckGracePeriodSeconds": 60
+}
+```
+
+## Systemd
+
+### Service Unit
+
+```ini
+[Unit]
+Description=HyperStack Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hyperstack
+Group=hyperstack
+WorkingDirectory=/opt/hyperstack
+ExecStart=/opt/hyperstack/bin/hyperstack-server
+Restart=on-failure
+RestartSec=10s
+Environment="RUST_LOG=info,hyperstack_server=debug"
+EnvironmentFile=/etc/hyperstack/server.env
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/hyperstack
+
+# Limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### Environment File
+
+```bash
+# /etc/hyperstack/server.env
+YELLOWSTONE_ENDPOINT=https://api.mainnet-beta.solana.com
+YELLOWSTONE_TOKEN=your-token-here
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+```
+
+### Commands
+
+```bash
+# Install service
+sudo cp hyperstack-server.service /etc/systemd/system/
+sudo systemctl daemon-reload
+
+# Enable and start
+sudo systemctl enable hyperstack-server
+sudo systemctl start hyperstack-server
+
+# Check status
+sudo systemctl status hyperstack-server
+
+# View logs
+sudo journalctl -u hyperstack-server -f
+```
+
+## Resource Requirements
+
+### Minimum
+
+- **CPU**: 0.5 cores
+- **Memory**: 512 MB
+- **Network**: 1 Mbps
+
+### Recommended
+
+- **CPU**: 2 cores
+- **Memory**: 2 GB
+- **Network**: 10 Mbps
+
+### High Traffic
+
+- **CPU**: 4-8 cores
+- **Memory**: 4-8 GB
+- **Network**: 100+ Mbps
+
+### Scaling Factors
+
+**Memory scales with**:
+- Number of entities in state tables (2,500 max per entity type)
+- Number of cached entities (500 max per view)
+- Number of concurrent WebSocket connections
+
+**CPU scales with**:
+- Event processing throughput
+- Number of computed fields
+- Complexity of bytecode transformations
+
+## Load Balancing
+
+### NGINX
+
+```nginx
+upstream hyperstack_ws {
+    least_conn;
+    server server1:8877;
+    server server2:8877;
+    server server3:8877;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name ws.hyperstack.example.com;
+
+    ssl_certificate /etc/ssl/certs/hyperstack.crt;
+    ssl_certificate_key /etc/ssl/private/hyperstack.key;
+
+    location / {
+        proxy_pass http://hyperstack_ws;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        
+        # WebSocket timeouts
+        proxy_connect_timeout 7d;
+        proxy_send_timeout 7d;
+        proxy_read_timeout 7d;
+    }
+}
+```
+
+### HAProxy
+
+```haproxy
+frontend websocket
+    bind *:443 ssl crt /etc/ssl/certs/hyperstack.pem
+    mode http
+    option httplog
+    default_backend hyperstack_servers
+
+backend hyperstack_servers
+    mode http
+    balance leastconn
+    option http-server-close
+    option forwardfor
+    timeout tunnel 7d
+    
+    server server1 10.0.1.1:8877 check
+    server server2 10.0.1.2:8877 check
+    server server3 10.0.1.3:8877 check
+```
+
+## Monitoring Setup
+
+### Prometheus
+
+```yaml
+scrape_configs:
+  - job_name: 'hyperstack-server'
+    static_configs:
+      - targets: ['server1:8081', 'server2:8081', 'server3:8081']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+```
+
+### Grafana Dashboard
+
+See [Monitoring](/server/monitoring) for detailed Grafana setup.
+
+## Security
+
+### TLS/SSL
+
+Always use TLS for production WebSocket connections:
+
+```javascript
+// Client connection
+const ws = new WebSocket('wss://ws.hyperstack.example.com');
+```
+
+### Network Policies (Kubernetes)
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: hyperstack-server-policy
+  namespace: hyperstack
+spec:
+  podSelector:
+    matchLabels:
+      app: hyperstack-server
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 8877
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 8081
+  egress:
+  - to:
+    - namespaceSelector: {}
+    ports:
+    - protocol: TCP
+      port: 53  # DNS
+  - to:
+    - podSelector: {}
+    ports:
+    - protocol: TCP
+      port: 10000  # Yellowstone
+```
+
+## Troubleshooting
+
+### Connection Issues
+
+```bash
+# Check if server is listening
+netstat -tulpn | grep 8877
+
+# Test WebSocket connection
+wscat -c ws://localhost:8877
+
+# Check health endpoint
+curl http://localhost:8081/health
+curl http://localhost:8081/ready
+```
+
+### Memory Issues
+
+```bash
+# Monitor memory usage
+top -p $(pgrep hyperstack-server)
+
+# Check OOM kills
+sudo dmesg | grep -i "out of memory"
+
+# Kubernetes pod memory
+kubectl top pod -n hyperstack
+```
+
+### Performance Issues
+
+```bash
+# Enable debug logging
+export RUST_LOG=hyperstack_server=debug,hyperstack_interpreter=trace
+
+# Profile with perf
+perf record -F 99 -p $(pgrep hyperstack-server) -g -- sleep 30
+perf report
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Monitoring" icon="chart-line" href="/server/monitoring">
+    Set up observability
+  </Card>
+  <Card title="Configuration" icon="sliders" href="/server/configuration">
+    Fine-tune server settings
+  </Card>
+  <Card title="WebSocket Protocol" icon="plug" href="/server/websocket-protocol">
+    Understand the protocol
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/server/architecture">
+    Learn the internals
+  </Card>
+</CardGroup>

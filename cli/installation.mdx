@@ -1,0 +1,157 @@
+---
+title: Installation
+description: Install the Hyperstack CLI on macOS, Linux, and Windows
+---
+
+# Installing the CLI
+
+The Hyperstack CLI (`hs`) is distributed as a standalone binary and via Cargo, Rust's package manager.
+
+## Install via Cargo (Recommended)
+
+### Prerequisites
+
+- **Rust 1.70+** - Install via [rustup](https://rustup.rs/)
+
+### Install
+
+```bash
+cargo install hyperstack-cli
+```
+
+This installs the `hs` binary to your Cargo bin directory (typically `~/.cargo/bin`).
+
+### Update
+
+```bash
+cargo install hyperstack-cli --force
+```
+
+## Install from Binary
+
+<Note>
+  Binary releases are coming soon. For now, use the Cargo installation method.
+</Note>
+
+## Install from Source
+
+For the latest development version:
+
+```bash
+# Clone the repository
+git clone https://github.com/HyperTekOrg/hyperstack.git
+cd hyperstack/cli
+
+# Build and install
+cargo install --path .
+```
+
+## Verify Installation
+
+Confirm the CLI is installed correctly:
+
+```bash
+hs --version
+```
+
+Expected output:
+```
+hyperstack-cli 0.5.3
+```
+
+## Shell Completions
+
+Enable tab completion for your shell:
+
+<CodeGroup>
+
+```bash Bash
+# Install completions
+hs --completions bash > /usr/local/etc/bash_completion.d/hs
+
+# Reload your shell
+source ~/.bashrc
+```
+
+```zsh Zsh
+# Install completions
+mkdir -p ~/.zsh/completion
+hs --completions zsh > ~/.zsh/completion/_hs
+
+# Add to ~/.zshrc if not already present
+fpath=(~/.zsh/completion $fpath)
+autoload -Uz compinit && compinit
+
+# Reload your shell
+source ~/.zshrc
+```
+
+```fish Fish
+# Install completions
+hs --completions fish > ~/.config/fish/completions/hs.fish
+```
+
+```powershell PowerShell
+# Install completions
+hs --completions powershell > $PROFILE\..\Completions\hs.ps1
+```
+
+</CodeGroup>
+
+## Configuration Directory
+
+The CLI stores credentials and settings in:
+
+- **macOS/Linux**: `~/.config/hyperstack/`
+- **Windows**: `%APPDATA%\hyperstack\`
+
+### Files Created
+
+- `credentials.toml` - API key and authentication tokens
+- `telemetry.toml` - Telemetry consent and settings
+
+## Development Mode
+
+For local development against a local Hyperstack API server:
+
+```bash
+# Build with local feature flag
+cargo install --path . --features local
+```
+
+This changes the API endpoint from `https://api.usehyperstack.com` to `http://localhost:3000`.
+
+## Troubleshooting
+
+### Command not found
+
+If `hs` is not found after installation:
+
+1. Ensure `~/.cargo/bin` is in your `PATH`:
+   ```bash
+   echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.bashrc
+   source ~/.bashrc
+   ```
+
+2. Verify the binary exists:
+   ```bash
+   ls ~/.cargo/bin/hs
+   ```
+
+### Permission denied
+
+If you get permission errors:
+
+```bash
+chmod +x ~/.cargo/bin/hs
+```
+
+### SSL/TLS errors
+
+The CLI uses `rustls` for HTTPS. If you encounter SSL errors, ensure your system has up-to-date CA certificates.
+
+## Next Steps
+
+- [Set up authentication](/cli/authentication)
+- [Create your first project](/cli/commands/create)
+- [Deploy a stack](/cli/commands/up)

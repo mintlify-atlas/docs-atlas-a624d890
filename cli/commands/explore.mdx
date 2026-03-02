@@ -1,0 +1,397 @@
+---
+title: hs explore
+description: Discover and explore stack schemas - view entities, projections, and field details
+---
+
+# hs explore
+
+Discover deployed stacks and explore their schemas. View entities, projections, relationships, and field types interactively.
+
+## Usage
+
+```bash
+# List all available stacks
+hs explore
+
+# Explore a specific stack
+hs explore STACK_NAME
+
+# Show details for a specific entity
+hs explore STACK_NAME ENTITY_NAME
+```
+
+## Arguments
+
+<ParamField path="name" type="string">
+  Stack name to explore
+  
+  If not provided, lists all available stacks.
+</ParamField>
+
+<ParamField path="entity" type="string">
+  Entity name to show field details
+  
+  Requires `name` to be specified.
+</ParamField>
+
+## Options
+
+<ParamField path="--json" type="boolean">
+  Output in JSON format
+</ParamField>
+
+## Examples
+
+### List All Stacks
+
+```bash
+hs explore
+```
+
+Output:
+```
+Available stacks:
+
+NAME             ENTITIES   PROJECTIONS   ENDPOINT
+nft-indexer      3          5             wss://nft-indexer.stack.usehyperstack.com
+token-tracker    2          3             wss://token-tracker.stack.usehyperstack.com
+ore-monitor      4          6             wss://ore-monitor.stack.usehyperstack.com
+
+Use 'hs explore <stack-name>' to view stack details.
+```
+
+### Explore Stack Schema
+
+```bash
+hs explore nft-indexer
+```
+
+Output:
+```
+Stack: nft-indexer
+Version: 3
+Endpoint: wss://nft-indexer.stack.usehyperstack.com
+
+Entities:
+  NftTransfer
+    - id: String
+    - from: String
+    - to: String
+    - mint: String
+    - timestamp: Integer
+    - slot: Integer
+  
+  NftMetadata
+    - mint: String (primary key)
+    - name: String
+    - symbol: String
+    - uri: String
+    - updated_at: Integer
+  
+  NftHolder
+    - wallet: String (primary key)
+    - mint: String
+    - balance: Integer
+    - last_updated: Integer
+
+Projections:
+  transfers_by_mint
+    Query: mint
+    Returns: [NftTransfer]
+  
+  transfers_by_wallet
+    Query: from | to
+    Returns: [NftTransfer]
+  
+  metadata
+    Query: mint
+    Returns: NftMetadata
+  
+  holders_by_mint
+    Query: mint
+    Returns: [NftHolder]
+  
+  holdings_by_wallet
+    Query: wallet
+    Returns: [NftHolder]
+
+Use 'hs explore nft-indexer <entity-name>' for field details.
+```
+
+### Explore Entity Details
+
+```bash
+hs explore nft-indexer NftTransfer
+```
+
+Output:
+```
+Entity: NftTransfer
+Stack: nft-indexer
+
+Fields:
+  id
+    Type: String
+    Required: Yes
+    Description: Unique transfer identifier (transaction signature)
+  
+  from
+    Type: String
+    Required: Yes
+    Indexed: Yes
+    Description: Source wallet address
+  
+  to
+    Type: String
+    Required: Yes
+    Indexed: Yes
+    Description: Destination wallet address
+  
+  mint
+    Type: String
+    Required: Yes
+    Indexed: Yes
+    Description: NFT mint address
+  
+  timestamp
+    Type: Integer
+    Required: Yes
+    Description: Block timestamp (Unix epoch seconds)
+  
+  slot
+    Type: Integer
+    Required: Yes
+    Description: Solana slot number
+
+Used in projections:
+  - transfers_by_mint
+  - transfers_by_wallet
+
+Relationships:
+  - mint -> NftMetadata.mint
+  - from -> NftHolder.wallet
+  - to -> NftHolder.wallet
+```
+
+### JSON Output
+
+```bash
+hs explore nft-indexer --json
+```
+
+```json
+{
+  "name": "nft-indexer",
+  "version": 3,
+  "endpoint": "wss://nft-indexer.stack.usehyperstack.com",
+  "entities": [
+    {
+      "name": "NftTransfer",
+      "fields": [
+        {
+          "name": "id",
+          "type": "String",
+          "required": true,
+          "primary_key": true
+        },
+        {
+          "name": "from",
+          "type": "String",
+          "required": true,
+          "indexed": true
+        },
+        {
+          "name": "to",
+          "type": "String",
+          "required": true,
+          "indexed": true
+        },
+        {
+          "name": "mint",
+          "type": "String",
+          "required": true,
+          "indexed": true
+        },
+        {
+          "name": "timestamp",
+          "type": "Integer",
+          "required": true
+        },
+        {
+          "name": "slot",
+          "type": "Integer",
+          "required": true
+        }
+      ]
+    }
+  ],
+  "projections": [
+    {
+      "name": "transfers_by_mint",
+      "query_params": ["mint"],
+      "returns": "NftTransfer[]"
+    },
+    {
+      "name": "transfers_by_wallet",
+      "query_params": ["from", "to"],
+      "returns": "NftTransfer[]"
+    }
+  ]
+}
+```
+
+## Use Cases
+
+### Understanding Stack Structure
+
+Before generating an SDK, explore the stack to understand its structure:
+
+```bash
+# 1. List available stacks
+hs explore
+
+# 2. Explore stack schema
+hs explore nft-indexer
+
+# 3. Check entity details
+hs explore nft-indexer NftTransfer
+
+# 4. Generate SDK
+hs sdk create typescript nft-indexer
+```
+
+### Debugging Queries
+
+Check which fields are indexed for efficient queries:
+
+```bash
+hs explore nft-indexer NftTransfer
+```
+
+Look for `Indexed: Yes` on fields you plan to query.
+
+### Documentation
+
+Generate documentation from stack schema:
+
+```bash
+hs explore nft-indexer --json > docs/nft-indexer-schema.json
+```
+
+### Comparing Versions
+
+Compare schema changes between versions:
+
+```bash
+# Explore version 2
+hs stack show nft-indexer --version 2
+
+# Explore latest version
+hs explore nft-indexer
+```
+
+## Field Types
+
+Common field types you'll see:
+
+- `String` - Text/address data
+- `Integer` - Whole numbers (i64)
+- `Float` - Decimal numbers (f64)
+- `Boolean` - true/false
+- `Bytes` - Binary data
+- `PublicKey` - Solana public key (32 bytes)
+
+## Field Attributes
+
+- **Required** - Field must have a value
+- **Optional** - Field can be null
+- **Primary Key** - Unique identifier
+- **Indexed** - Optimized for queries
+- **Foreign Key** - References another entity
+
+## Projection Types
+
+### Single Entity
+
+Returns one entity:
+
+```
+metadata
+  Query: mint
+  Returns: NftMetadata
+```
+
+### List of Entities
+
+Returns multiple entities:
+
+```
+transfers_by_mint
+  Query: mint
+  Returns: [NftTransfer]
+```
+
+### Aggregation
+
+Returns computed values:
+
+```
+transfer_count_by_mint
+  Query: mint
+  Returns: Integer
+```
+
+## Error Handling
+
+### Stack Not Found
+
+```
+Error: Stack 'invalid-stack' not found
+```
+
+**Solution:** List available stacks:
+```bash
+hs explore
+```
+
+### Entity Not Found
+
+```
+Error: Entity 'InvalidEntity' not found in stack 'nft-indexer'
+```
+
+**Solution:** List entities:
+```bash
+hs explore nft-indexer
+```
+
+### Authentication Required
+
+```
+Error: Not authenticated
+```
+
+**Solution:** Login first:
+```bash
+hs auth login
+```
+
+## Interactive Exploration
+
+For a better experience, use the interactive web explorer:
+
+```bash
+# Open stack in web explorer
+open https://usehyperstack.com/stacks/nft-indexer
+```
+
+## Return Codes
+
+- `0` - Success
+- `1` - Error (stack not found, authentication required, etc.)
+
+## Related Commands
+
+- [`hs sdk create`](/cli/commands/sdk) - Generate SDK from stack
+- [`hs stack show`](/cli/commands/stack#show) - Show deployment details
+- [`hs stack list`](/cli/commands/stack#list) - List all stacks

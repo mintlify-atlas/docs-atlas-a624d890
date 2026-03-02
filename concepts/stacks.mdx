@@ -1,0 +1,662 @@
+---
+title: Stacks
+description: Understand the client-side Stack API and how to use it in your applications
+---
+
+A **stack** is the client-side interface to your deployed Hyperstack stream. It provides type-safe access to real-time data, transactions, and utilities. This page explains the stack concept and how to use it.
+
+## What is a Stack?
+
+A stack is a TypeScript/Python/Rust SDK that:
+
+1. **Connects** to your deployed stream via WebSocket
+2. **Subscribes** to entity views
+3. **Receives** real-time updates as mutations
+4. **Merges** deltas into local state
+5. **Provides** type-safe APIs for your app
+
+### Stack vs Stream
+
+| Concept | Location | Purpose |
+|---------|----------|----------|
+| **Stream** | Server-side | Processes blockchain events into entities |
+| **Stack** | Client-side | Provides access to processed entities |
+
+## Stack Definition
+
+### TypeScript
+
+Define a stack using `defineStack`:
+
+```typescript
+import { defineStack, createListView, createStateView } from 'hyperstack-react';
+
+const TokenStack = defineStack({
+  name: 'my-tokens',
+  
+  views: {
+    tokens: {
+      list: createListView<Token>('Token/list'),
+      state: createStateView<Token>('Token/state'),
+    },
+    users: {
+      list: createListView<UserProfile>('UserProfile/list'),
+    },
+  },
+  
+  transactions: {
+    buy: {
+      build: (params: { mint: string; amount: number }) => ({
+        instruction: 'buy',
+        accounts: { mint: params.mint },
+        data: { amount: params.amount },
+      }),
+      refresh: [{ view: 'tokens/state', key: (p) => p.mint }],
+    },
+  },
+  
+  helpers: {
+    formatPrice: (lamports: number) => `${(lamports / 1e9).toFixed(6)} SOL`,
+  },
+});
+
+export default TokenStack;
+```
+
+### Rust
+
+Use the Rust SDK directly:
+
+```rust
+use hyperstack_sdk::HyperStack;
+
+let hs = HyperStack::new("wss://api.hyperstack.xyz/ws")
+    .await?;
+
+let mut stream = hs.watch::<Token>()
+    .filter(|token| token.total_volume > 1_000_000)
+    .await?;
+
+while let Some(update) = stream.next().await {
+    println!("Token updated: {:?}", update);
+}
+```
+
+### Python
+
+```python
+from hyperstack import HyperStack
+
+hs = HyperStack("wss://api.hyperstack.xyz/ws")
+
+for update in hs.watch("Token"):
+    if update.total_volume > 1_000_000:
+        print(f"High volume token: {update.mint}")
+```
+
+## Stack Components
+
+### Views
+
+Views provide access to entity data:
+
+```typescript
+views: {
+  tokens: {
+    list: createListView<Token>('Token/list'),
+    state: createStateView<Token>('Token/state'),
+  },
+}
+```
+
+#### List Views
+
+Returns an array of entities:
+
+```typescript
+const { data: tokens } = stack.views.tokens.list.use();
+// tokens: Token[] | undefined
+```
+
+**With Filters:**
+```typescript
+const { data } = stack.views.tokens.list.use({
+  limit: 50,
+  where: { total_volume: { gte: 1000 } },
+});
+```
+
+#### State Views
+
+Returns a single entity by key:
+
+```typescript
+const { data: token } = stack.views.tokens.state.use({ 
+  key: mintAddress 
+});
+// token: Token | undefined
+```
+
+### Transactions
+
+Transaction builders with automatic refresh:
+
+```typescript
+transactions: {
+  buy: {
+    build: (params: { mint: string; amount: number }) => ({
+      instruction: 'buy',
+      accounts: { mint: params.mint },
+      data: { amount: params.amount },
+    }),
+    refresh: [
+      { view: 'tokens/state', key: (p) => p.mint },
+      { view: 'users/state', key: (p) => wallet.publicKey.toString() },
+    ],
+  },
+}
+```
+
+**Usage:**
+```typescript
+const { submit, status } = stack.tx.useMutation();
+
+const handleBuy = async () => {
+  const ix = stack.transactions.buy.build({ 
+    mint: tokenMint, 
+    amount: 1000 
+  });
+  
+  const signature = await submit(ix);
+  // Views automatically refresh after transaction
+};
+```
+
+### Helpers
+
+Utility functions bundled with the stack:
+
+```typescript
+helpers: {
+  formatPrice: (lamports: number) => `${(lamports / 1e9).toFixed(6)} SOL`,
+  calculateMarketCap: (token: Token) => token.supply * token.price,
+}
+```
+
+**Usage:**
+```typescript
+const price = stack.helpers.formatPrice(token.sol_reserves);
+// "1.234567 SOL"
+```
+
+## View Modes
+
+### List View
+
+Returns all entities as an array:
+
+```typescript
+const listView = createListView<Token>('Token/list');
+```
+
+**Access Pattern:**
+```typescript
+const { data } = stack.views.tokens.list.use();
+// data: Token[]
+```
+
+**Query Parameters:**
+```typescript
+interface ListParams {
+  key?: string;           // Partition key filter
+  where?: WhereClause;    // Field filters
+  limit?: number;         // Max results
+}
+```
+
+**Example:**
+```typescript
+const { data } = stack.views.tokens.list.use({
+  limit: 10,
+  where: {
+    total_volume: { gte: 1_000_000 },
+    created_at: { gt: Date.now() - 86400000 },
+  },
+});
+```
+
+### State View
+
+Returns a single entity by primary key:
+
+```typescript
+const stateView = createStateView<Token>('Token/state');
+```
+
+**Access Pattern:**
+```typescript
+const { data } = stack.views.tokens.state.use({ key: mintAddress });
+// data: Token | undefined
+```
+
+**Required Parameter:**
+```typescript
+interface StateParams {
+  key: string;  // Primary key value
+}
+```
+
+## View Transformations
+
+Apply transformations to view data:
+
+```typescript
+const tokenList = createListView<Token>('Token/list', {
+  transform: (raw) => ({
+    ...raw,
+    priceFormatted: (raw.sol_reserves / raw.token_reserves).toFixed(6),
+    volumeFormatted: (raw.total_volume / 1e9).toFixed(2) + ' SOL',
+  }),
+});
+```
+
+**Complex Transformations:**
+```typescript
+const enrichedTokens = createListView<EnrichedToken>('Token/list', {
+  transform: (raw) => ({
+    // Flatten nested structure
+    mint: raw.id.mint,
+    name: raw.metadata.name ?? 'Unknown',
+    symbol: raw.metadata.symbol ?? '???',
+    price: raw.reserves.price ?? 0,
+    volume: raw.trading.total_volume,
+    
+    // Compute derived values
+    marketCap: raw.reserves.price ? 
+      raw.reserves.price * raw.total_supply : 0,
+    
+    // Format dates
+    createdAt: new Date(raw.created_at * 1000),
+  }),
+});
+```
+
+## Real-Time Updates
+
+### How Updates Work
+
+1. **Initial Subscription:**
+   ```typescript
+   const { data } = stack.views.tokens.list.use();
+   ```
+   - Client subscribes to `Token/list` view
+   - Server sends snapshot of current state
+   - Hook returns initial data
+
+2. **Mutation Arrives:**
+   ```json
+   {
+     "type": "mutation",
+     "export": "Token",
+     "key": "mint_address",
+     "patch": { "sol_reserves": 1000 },
+     "append": ["trades"]
+   }
+   ```
+
+3. **SDK Merges Delta:**
+   - Finds entity with matching key
+   - Applies patch (deep merge)
+   - Appends new items to arrays
+   - Triggers re-render
+
+4. **Component Re-renders:**
+   ```typescript
+   // Component automatically re-renders with new data
+   console.log(data.sol_reserves); // 1000 (updated)
+   ```
+
+### Delta Updates
+
+Hyperstack sends only changed fields:
+
+**Full State:**
+```json
+{
+  "mint": "TokenMint...",
+  "sol_reserves": 500,
+  "token_reserves": 1000000,
+  "total_volume": 50000,
+  "trade_count": 100
+}
+```
+
+**Mutation (only changed field):**
+```json
+{
+  "patch": { "sol_reserves": 1000 }
+}
+```
+
+**Merged Result:**
+```json
+{
+  "mint": "TokenMint...",
+  "sol_reserves": 1000,          // Updated
+  "token_reserves": 1000000,     // Unchanged
+  "total_volume": 50000,         // Unchanged
+  "trade_count": 100             // Unchanged
+}
+```
+
+### Append-Only Updates
+
+Array fields with `Append` strategy send only new items:
+
+**Initial State:**
+```json
+{
+  "trades": [
+    { "user": "User1", "amount": 100 },
+    { "user": "User2", "amount": 200 },
+  ]
+}
+```
+
+**Mutation (only new trade):**
+```json
+{
+  "patch": {},
+  "append": ["trades"],
+  "trades": [
+    { "user": "User3", "amount": 300 }  // Only the new trade
+  ]
+}
+```
+
+**Merged Result:**
+```json
+{
+  "trades": [
+    { "user": "User1", "amount": 100 },
+    { "user": "User2", "amount": 200 },
+    { "user": "User3", "amount": 300 },  // Appended
+  ]
+}
+```
+
+## Connection Management
+
+### Connection States
+
+```typescript
+type ConnectionState = 
+  | 'disconnected'
+  | 'connecting'
+  | 'connected'
+  | 'error'
+  | 'reconnecting';
+```
+
+### Monitoring Connection
+
+```typescript
+const { connectionState, isConnected } = useHyperstack(TokenStack);
+
+if (connectionState === 'connected') {
+  // Connected and receiving updates
+}
+
+if (connectionState === 'reconnecting') {
+  // Temporarily disconnected, attempting to reconnect
+}
+```
+
+### Auto-Reconnect
+
+The SDK automatically reconnects on disconnection:
+
+1. **Disconnect Detected**: Connection lost
+2. **Reconnection Attempt**: Exponential backoff
+3. **Resubscribe**: Re-establish view subscriptions
+4. **Sync State**: Fetch latest snapshots
+
+## Type Safety
+
+Stacks provide end-to-end type safety:
+
+### Generated Types
+
+```typescript
+// Generated from Rust entity definition
+interface Token {
+  mint: string;           // from Rust String
+  sol_reserves: number;   // from Rust u64
+  total_volume: bigint;   // from Rust u128
+  trades: TradeEvent[];   // from Rust Vec<TradeEvent>
+}
+```
+
+### Type Inference
+
+```typescript
+const { data } = stack.views.tokens.list.use();
+// TypeScript knows: data is Token[] | undefined
+
+if (data) {
+  data.forEach(token => {
+    console.log(token.mint);           // ✓ string
+    console.log(token.sol_reserves);   // ✓ number
+    console.log(token.invalid);        // ✗ TypeScript error
+  });
+}
+```
+
+### Transaction Type Safety
+
+```typescript
+stack.transactions.buy.build({
+  mint: "TokenMint...",
+  amount: 1000,
+  // invalid: true,  // ✗ TypeScript error
+});
+```
+
+## Advanced Usage
+
+### Conditional Subscriptions
+
+```typescript
+function TokenDetail({ mint }: { mint: string | null }) {
+  const stack = useHyperstack(TokenStack);
+  
+  // Only subscribe when mint is available
+  const { data } = stack.views.tokens.state.use(
+    mint ? { key: mint } : undefined
+  );
+  
+  if (!mint) return <p>Select a token</p>;
+  if (!data) return <p>Loading...</p>;
+  return <TokenCard token={data} />;
+}
+```
+
+### Multiple Views
+
+```typescript
+function Dashboard() {
+  const stack = useHyperstack(TokenStack);
+  
+  const { data: tokens } = stack.views.tokens.list.use();
+  const { data: users } = stack.views.users.list.use();
+  const { data: stats } = stack.views.stats.state.use({ key: 'global' });
+  
+  if (!tokens || !users || !stats) return <Loading />;
+  
+  return <DashboardView tokens={tokens} users={users} stats={stats} />;
+}
+```
+
+### Manual Refresh
+
+```typescript
+const { data, refresh, isLoading } = stack.views.tokens.list.use();
+
+const handleRefresh = () => {
+  refresh();  // Force re-fetch from server
+};
+```
+
+### Optimistic Updates
+
+```typescript
+const { submit } = stack.tx.useMutation();
+
+const handleBuy = async () => {
+  // Optimistically update local state
+  updateLocalState(token => ({
+    ...token,
+    total_volume: token.total_volume + amount,
+  }));
+  
+  try {
+    await submit(instruction);
+    // Server update will overwrite optimistic update
+  } catch (error) {
+    // Revert optimistic update
+    revertLocalState();
+  }
+};
+```
+
+## Stack Patterns
+
+### Derived Views
+
+Create computed views from base views:
+
+```typescript
+function useTopTokens(limit: number = 10) {
+  const { data: allTokens } = stack.views.tokens.list.use();
+  
+  const topTokens = useMemo(() => {
+    if (!allTokens) return undefined;
+    return allTokens
+      .sort((a, b) => b.total_volume - a.total_volume)
+      .slice(0, limit);
+  }, [allTokens, limit]);
+  
+  return topTokens;
+}
+```
+
+### Filtered Views
+
+```typescript
+function useMyTokens(userAddress: string) {
+  const { data: allTokens } = stack.views.tokens.list.use();
+  
+  const myTokens = useMemo(() => {
+    if (!allTokens) return undefined;
+    return allTokens.filter(token => token.creator === userAddress);
+  }, [allTokens, userAddress]);
+  
+  return myTokens;
+}
+```
+
+### Aggregated Views
+
+```typescript
+function useTokenStats() {
+  const { data: tokens } = stack.views.tokens.list.use();
+  
+  const stats = useMemo(() => {
+    if (!tokens) return undefined;
+    
+    return {
+      total: tokens.length,
+      totalVolume: tokens.reduce((sum, t) => sum + t.total_volume, 0),
+      avgVolume: tokens.reduce((sum, t) => sum + t.total_volume, 0) / tokens.length,
+      highestVolume: Math.max(...tokens.map(t => t.total_volume)),
+    };
+  }, [tokens]);
+  
+  return stats;
+}
+```
+
+## Performance Optimization
+
+### View Granularity
+
+Use state views for individual entities to avoid re-renders:
+
+```typescript
+// ✓ Good: Only re-renders when this specific token changes
+function TokenCard({ mint }: { mint: string }) {
+  const { data } = stack.views.tokens.state.use({ key: mint });
+  return <Card>{data?.name}</Card>;
+}
+
+// ✗ Avoid: Re-renders when ANY token changes
+function TokenCard({ mint }: { mint: string }) {
+  const { data: tokens } = stack.views.tokens.list.use();
+  const token = tokens?.find(t => t.mint === mint);
+  return <Card>{token?.name}</Card>;
+}
+```
+
+### Memoization
+
+Memoize expensive computations:
+
+```typescript
+const { data: tokens } = stack.views.tokens.list.use();
+
+const sortedTokens = useMemo(() => {
+  if (!tokens) return [];
+  return [...tokens].sort((a, b) => b.total_volume - a.total_volume);
+}, [tokens]);
+```
+
+### Lazy Loading
+
+Fetch data only when needed:
+
+```typescript
+function TokenList() {
+  const [selectedMint, setSelectedMint] = useState<string | null>(null);
+  
+  const { data: tokens } = stack.views.tokens.list.use();
+  
+  // Only fetch details for selected token
+  const { data: details } = stack.views.tokens.state.use(
+    selectedMint ? { key: selectedMint } : undefined
+  );
+  
+  return (
+    <div>
+      <List tokens={tokens} onSelect={setSelectedMint} />
+      {details && <Details token={details} />}
+    </div>
+  );
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="React SDK" icon="react" href="/sdks/react">
+    Build React apps with Hyperstack
+  </Card>
+  <Card title="TypeScript SDK" icon="js" href="/sdks/typescript">
+    Framework-agnostic TypeScript SDK
+  </Card>
+  <Card title="Rust SDK" icon="rust" href="/sdks/rust">
+    Native Rust client SDK
+  </Card>
+  <Card title="Stack API Reference" icon="book" href="/concepts/stack-api">
+    Complete Stack API docs
+  </Card>
+</CardGroup>

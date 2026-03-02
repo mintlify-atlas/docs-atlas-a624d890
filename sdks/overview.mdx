@@ -1,0 +1,201 @@
+---
+title: "SDK Overview"
+description: "Choose the right Hyperstack SDK for your application"
+---
+
+Hyperstack provides official SDKs for multiple languages and frameworks, making it easy to integrate real-time Solana data streaming into your applications.
+
+## Available SDKs
+
+<CardGroup cols={2}>
+  <Card title="TypeScript" icon="js" href="/sdks/typescript">
+    Pure TypeScript SDK for Node.js and web applications
+  </Card>
+  <Card title="React" icon="react" href="/sdks/react">
+    React SDK with hooks for building real-time UIs
+  </Card>
+  <Card title="Rust" icon="rust" href="/sdks/rust">
+    High-performance Rust client SDK
+  </Card>
+  <Card title="Python" icon="python" href="/sdks/python">
+    Python SDK for backend services (work in progress)
+  </Card>
+</CardGroup>
+
+## SDK Comparison
+
+| SDK | Package | Version | Status | Use Case |
+|-----|---------|---------|--------|----------|
+| TypeScript | `hyperstack-typescript` | 0.5.3 | Stable | Node.js, web apps, any JavaScript framework |
+| React | `hyperstack-react` | 0.5.3 | Stable | React applications with hooks |
+| Rust | `hyperstack-sdk` | 0.5.3 | Stable | High-performance services, CLI tools |
+| Python | `hyperstack-sdk` | 0.1.0 | WIP | Backend services, data pipelines |
+
+## Quick Start
+
+### TypeScript
+
+<CodeGroup>
+```bash npm
+npm install hyperstack-typescript
+```
+```bash yarn
+yarn add hyperstack-typescript
+```
+```bash pnpm
+pnpm add hyperstack-typescript
+```
+</CodeGroup>
+
+```typescript
+import { HyperStack } from 'hyperstack-typescript';
+import { MY_STACK } from './generated/my-stack';
+
+const hs = await HyperStack.connect('wss://mainnet.hyperstack.xyz', {
+  stack: MY_STACK,
+});
+
+for await (const update of hs.views.myView.list.watch()) {
+  console.log('Update:', update);
+}
+```
+
+### React
+
+<CodeGroup>
+```bash npm
+npm install hyperstack-react
+```
+```bash yarn
+yarn add hyperstack-react
+```
+```bash pnpm
+pnpm add hyperstack-react
+```
+</CodeGroup>
+
+```tsx
+import { HyperstackProvider, useHyperstack } from 'hyperstack-react';
+
+function App() {
+  return (
+    <HyperstackProvider config={{ url: 'wss://mainnet.hyperstack.xyz' }}>
+      <MyComponent />
+    </HyperstackProvider>
+  );
+}
+
+function MyComponent() {
+  const stack = useHyperstack(myStack);
+  const data = stack.views.myView.use();
+  return <div>{data.length} items</div>;
+}
+```
+
+### Rust
+
+```toml
+[dependencies]
+hyperstack-sdk = "0.5"
+```
+
+```rust
+use hyperstack_sdk::prelude::*;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let hs = HyperStack::connect("wss://mainnet.hyperstack.xyz").await?;
+    
+    let mut stream = hs.watch::<MyEntity>();
+    while let Some(update) = stream.next().await {
+        println!("Update: {:?}", update);
+    }
+    
+    Ok(())
+}
+```
+
+### Python
+
+<Warning>
+The Python SDK is under active development and has not yet been published to PyPI.
+</Warning>
+
+```bash
+# Coming soon
+pip install hyperstack-sdk
+```
+
+```python
+from hyperstack import HyperstackClient
+
+client = HyperstackClient()
+await client.connect()
+```
+
+## Common Features
+
+All SDKs provide:
+
+- **Real-time streaming** - Subscribe to live data updates via WebSocket
+- **Type safety** - Full type definitions generated from your stack spec
+- **Auto-reconnection** - Automatic reconnection with configurable backoff
+- **State management** - Built-in entity store with key-value lookups
+- **Multiple view types** - Support for state, list, and derived views
+- **One-shot queries** - Fetch current state without streaming
+
+## Choosing the Right SDK
+
+### Use TypeScript if:
+- You're building a Node.js backend or web application
+- You need framework-agnostic streaming with AsyncIterables
+- You want maximum compatibility across JavaScript runtimes
+
+### Use React if:
+- You're building a React application
+- You want hooks-based integration (`use()`, `useOne()`)
+- You need built-in state management with Zustand
+
+### Use Rust if:
+- You need maximum performance and low latency
+- You're building CLI tools or backend services
+- You want compile-time type safety and zero-cost abstractions
+
+### Use Python if:
+- You're building data pipelines or analytics tools
+- You need integration with Python data science libraries
+- You prefer async/await Python syntax
+
+## SDK Generation
+
+Generate type-safe SDKs from your stack specification using the Hyperstack CLI:
+
+```bash
+# Generate TypeScript SDK
+hs sdk create typescript my-stack
+
+# Generate Rust SDK
+hs sdk create rust my-stack
+
+# Generate Python SDK
+hs sdk create python my-stack
+```
+
+See the [CLI documentation](/cli/overview) for more details.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="TypeScript SDK" icon="js" href="/sdks/typescript">
+    Learn about the TypeScript SDK
+  </Card>
+  <Card title="React SDK" icon="react" href="/sdks/react">
+    Build real-time React UIs
+  </Card>
+  <Card title="Rust SDK" icon="rust" href="/sdks/rust">
+    High-performance streaming
+  </Card>
+  <Card title="Python SDK" icon="python" href="/sdks/python">
+    Backend integration (WIP)
+  </Card>
+</CardGroup>

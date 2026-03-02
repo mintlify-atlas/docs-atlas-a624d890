@@ -1,0 +1,435 @@
+---
+title: "React SDK"
+description: "React hooks for building real-time Solana UIs with Hyperstack"
+---
+
+The React SDK provides hooks-based integration for React applications. Built on top of `hyperstack-typescript`, it offers seamless state management with Zustand and idiomatic React patterns.
+
+## Installation
+
+<CodeGroup>
+```bash npm
+npm install hyperstack-react
+```
+```bash yarn
+yarn add hyperstack-react
+```
+```bash pnpm
+pnpm add hyperstack-react
+```
+```bash bun
+bun add hyperstack-react
+```
+</CodeGroup>
+
+## Requirements
+
+- React 18.0+ or React 19.0+
+- Zustand 4.0+ or 5.0+
+- A generated stack definition from the Hyperstack CLI
+
+<Note>
+  Not using React? Use [`hyperstack-typescript`](/sdks/typescript) directly for Vue, Svelte, Node.js, or vanilla JavaScript.
+</Note>
+
+## Quick Start
+
+### Setup Provider
+
+Wrap your application with `HyperstackProvider`:
+
+```tsx
+import { HyperstackProvider } from 'hyperstack-react';
+
+function App() {
+  return (
+    <HyperstackProvider 
+      config={{ 
+        url: 'wss://mainnet.hyperstack.xyz',
+        autoConnect: true 
+      }}
+    >
+      <GameDashboard />
+    </HyperstackProvider>
+  );
+}
+```
+
+### Use Hooks in Components
+
+```tsx
+import { useHyperstack, defineStack } from 'hyperstack-react';
+import { MY_STACK } from './generated/my-stack';
+
+const myStack = defineStack(MY_STACK);
+
+function GameDashboard() {
+  const stack = useHyperstack(myStack);
+  
+  // Subscribe to all games (returns T[])
+  const games = stack.views.games.use();
+  
+  // Subscribe to a specific game (returns T | undefined)
+  const game = stack.views.games.useOne('game-123');
+  
+  return (
+    <div>
+      <h1>Active Games: {games.length}</h1>
+      {game && <GameDetails game={game} />}
+    </div>
+  );
+}
+```
+
+## API Reference
+
+### Providers
+
+#### HyperstackProvider
+
+Root provider for Hyperstack configuration.
+
+```tsx
+<HyperstackProvider config={{
+  url: 'wss://mainnet.hyperstack.xyz',
+  autoConnect: true,
+  reconnect: true,
+}}>
+  {children}
+</HyperstackProvider>
+```
+
+<ResponseField name="config" type="HyperstackConfig" required>
+  Configuration options:
+  - `url`: WebSocket server URL
+  - `autoConnect`: Auto-connect on mount (default: `true`)
+  - `reconnect`: Auto-reconnect on disconnect (default: `true`)
+</ResponseField>
+
+### Hooks
+
+#### useHyperstack
+
+Main hook for accessing stack functionality.
+
+```tsx
+const stack = useHyperstack(myStack);
+```
+
+<ResponseField name="stack" type="Stack">
+  Stack instance with typed view accessors.
+</ResponseField>
+
+#### useHyperstackContext
+
+Access the runtime context directly.
+
+```tsx
+const { connectionState, connect, disconnect } = useHyperstackContext();
+```
+
+<ResponseField name="connectionState" type="ConnectionState">
+  Current connection state: `'connected'` | `'connecting'` | `'disconnected'` | `'error'`
+</ResponseField>
+
+<ResponseField name="connect" type="() => Promise<void>">
+  Manually connect to the server.
+</ResponseField>
+
+<ResponseField name="disconnect" type="() => Promise<void>">
+  Disconnect from the server.
+</ResponseField>
+
+### View Methods
+
+Each view provides hooks for subscribing to data.
+
+#### use()
+
+Subscribe to view data. Returns different types based on view type:
+
+```tsx
+// List view - returns T[]
+const games = stack.views.games.use();
+
+// State view - returns T | undefined
+const player = stack.views.player.use('player-id');
+
+// Single item query - returns T | undefined
+const topGame = stack.views.games.use({ take: 1 });
+```
+
+<ParamField path="options" type="object" optional>
+  Query options:
+  - `take: 1` - Fetch only the first item (enables type narrowing to `T | undefined`)
+</ParamField>
+
+#### useOne()
+
+Convenience method for single item queries.
+
+```tsx
+// Equivalent to .use({ take: 1 })
+const topGame = stack.views.games.useOne();
+```
+
+## Examples
+
+### Real-time Game List
+
+```tsx
+import { useHyperstack, defineStack } from 'hyperstack-react';
+import { GAME_STACK } from './generated/game-stack';
+
+const gameStack = defineStack(GAME_STACK);
+
+function GameList() {
+  const stack = useHyperstack(gameStack);
+  const games = stack.views.games.use();
+  
+  return (
+    <div>
+      <h2>Active Games ({games.length})</h2>
+      <ul>
+        {games.map(game => (
+          <li key={game.id}>
+            {game.name} - {game.players.length} players
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+```
+
+### Live Leaderboard
+
+```tsx
+function Leaderboard() {
+  const stack = useHyperstack(gameStack);
+  const players = stack.views.players.use();
+  
+  // Sort by score (descending)
+  const sorted = [...players].sort((a, b) => b.score - a.score);
+  
+  return (
+    <div>
+      <h2>Top Players</h2>
+      <ol>
+        {sorted.slice(0, 10).map((player, index) => (
+          <li key={player.id}>
+            #{index + 1} {player.name} - {player.score} points
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+```
+
+### Single Item Query
+
+```tsx
+function GameDetails({ gameId }: { gameId: string }) {
+  const stack = useHyperstack(gameStack);
+  const game = stack.views.games.use(gameId);
+  
+  if (!game) {
+    return <div>Game not found</div>;
+  }
+  
+  return (
+    <div>
+      <h2>{game.name}</h2>
+      <p>Status: {game.status}</p>
+      <p>Players: {game.players.length}</p>
+    </div>
+  );
+}
+```
+
+### Top Item with Type Safety
+
+```tsx
+function FeaturedGame() {
+  const stack = useHyperstack(gameStack);
+  
+  // Type is narrowed to Game | undefined
+  const topGame = stack.views.games.useOne();
+  
+  if (!topGame) {
+    return <div>No games available</div>;
+  }
+  
+  return (
+    <div>
+      <h2>Featured: {topGame.name}</h2>
+      <p>{topGame.description}</p>
+    </div>
+  );
+}
+```
+
+### Connection Status
+
+```tsx
+import { useHyperstackContext } from 'hyperstack-react';
+
+function ConnectionIndicator() {
+  const { connectionState } = useHyperstackContext();
+  
+  const getStatus = () => {
+    switch (connectionState) {
+      case 'connected': return { color: 'green', text: 'Connected' };
+      case 'connecting': return { color: 'yellow', text: 'Connecting...' };
+      case 'disconnected': return { color: 'red', text: 'Disconnected' };
+      case 'error': return { color: 'red', text: 'Connection Error' };
+    }
+  };
+  
+  const status = getStatus();
+  
+  return (
+    <div style={{ color: status.color }}>
+      ● {status.text}
+    </div>
+  );
+}
+```
+
+### Manual Connection Control
+
+```tsx
+function ConnectionControl() {
+  const { connectionState, connect, disconnect } = useHyperstackContext();
+  
+  return (
+    <div>
+      <p>Status: {connectionState}</p>
+      {connectionState === 'disconnected' ? (
+        <button onClick={connect}>Connect</button>
+      ) : (
+        <button onClick={disconnect}>Disconnect</button>
+      )}
+    </div>
+  );
+}
+```
+
+## Advanced Usage
+
+### Custom Stack Definition
+
+```tsx
+import { defineStack, createListView, createStateView } from 'hyperstack-react';
+
+const myStack = defineStack({
+  views: {
+    games: createListView<Game>({ name: 'games' }),
+    player: createStateView<Player>({ name: 'player' }),
+  },
+});
+
+function MyApp() {
+  const stack = useHyperstack(myStack);
+  // Fully typed views
+}
+```
+
+### Filtering and Derived State
+
+```tsx
+function ActiveGames() {
+  const stack = useHyperstack(gameStack);
+  const allGames = stack.views.games.use();
+  
+  // Derive filtered state
+  const activeGames = allGames.filter(game => game.status === 'active');
+  const completedGames = allGames.filter(game => game.status === 'completed');
+  
+  return (
+    <div>
+      <h3>Active: {activeGames.length}</h3>
+      <h3>Completed: {completedGames.length}</h3>
+    </div>
+  );
+}
+```
+
+### Using with Core SDK
+
+Access low-level streaming APIs:
+
+```tsx
+import { HyperStack } from 'hyperstack-react';
+// or from 'hyperstack-typescript'
+
+const hs = await HyperStack.connect('wss://mainnet.hyperstack.xyz', {
+  stack: MY_STACK,
+});
+
+for await (const update of hs.views.games.list.watch()) {
+  console.log('Update:', update);
+}
+```
+
+## State Management
+
+The React SDK uses Zustand internally for state management. Each view maintains its own store:
+
+- **List views** store entities as `Record<string, T>`
+- **State views** store single entities as `T | undefined`
+- **Derived views** store computed values
+
+Updates are batched and optimized to minimize re-renders.
+
+## Performance Tips
+
+### Memoize Derived Values
+
+```tsx
+import { useMemo } from 'react';
+
+function LeaderboardOptimized() {
+  const stack = useHyperstack(gameStack);
+  const players = stack.views.players.use();
+  
+  // Memoize sorted array
+  const sorted = useMemo(
+    () => [...players].sort((a, b) => b.score - a.score),
+    [players]
+  );
+  
+  return <div>{/* render sorted */}</div>;
+}
+```
+
+### Selective Subscriptions
+
+```tsx
+// Subscribe to specific entity only
+function PlayerCard({ playerId }: { playerId: string }) {
+  const stack = useHyperstack(gameStack);
+  const player = stack.views.players.use(playerId);
+  
+  // Only re-renders when this specific player updates
+  return <div>{player?.name}</div>;
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="TypeScript SDK" icon="js" href="/sdks/typescript">
+    Learn about the core TypeScript SDK
+  </Card>
+  <Card title="Examples" icon="code" href="https://github.com/HyperTekOrg/hyperstack/tree/main/examples">
+    Browse example applications
+  </Card>
+  <Card title="Stack API" icon="book" href="/concepts/stack-api">
+    Understand Stack API concepts
+  </Card>
+  <Card title="CLI Reference" icon="terminal" href="/cli/commands">
+    Generate SDKs with the CLI
+  </Card>
+</CardGroup>

@@ -1,0 +1,257 @@
+---
+title: hyperstack-sdk
+description: Rust client SDK for connecting to HyperStack streaming servers
+---
+
+The `hyperstack-sdk` crate provides a Rust client for connecting to HyperStack streaming servers and consuming real-time entity updates.
+
+<Info>
+  View on [docs.rs](https://docs.rs/hyperstack-sdk)
+</Info>
+
+## Installation
+
+```toml
+[dependencies]
+hyperstack-sdk = "0.2"
+```
+
+## Quick Start
+
+```rust
+use hyperstack_sdk::prelude::*;
+use hyperstack_stacks::ore::OreStack;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let hs = HyperStack::<OreStack>::connect().await?;
+    
+    for round in hs.views.latest().listen() {
+        println!("Round: {:?}", round);
+    }
+    
+    Ok(())
+}
+```
+
+## Core Types
+
+### Client
+
+<ResponseField name="HyperStack<S>" type="struct">
+  Main client for connecting to HyperStack servers
+  
+  Generic over `S: Stack` which defines the entity schema.
+  
+  ### Fields
+  
+  <ParamField path="views" type="Views<S>">
+    Access to typed views for querying entities
+  </ParamField>
+</ResponseField>
+
+<ResponseField name="HyperStackBuilder" type="struct">
+  Builder for configuring client connections
+</ResponseField>
+
+### Connection
+
+<ResponseField name="ConnectionState" type="enum">
+  Current state of the WebSocket connection
+  
+  - `Disconnected`
+  - `Connecting`
+  - `Connected`
+  - `Reconnecting`
+  - `Error`
+</ResponseField>
+
+### Entity Schema
+
+<ResponseField name="Stack" type="trait">
+  Trait defining entity schema for a HyperStack instance
+  
+  ```rust
+  pub trait Stack {
+      type Views: ViewGroup;
+      const URL: &'static str;
+      const NAME: &'static str;
+  }
+  ```
+</ResponseField>
+
+## Errors
+
+<ResponseField name="HyperStackError" type="enum">
+  Error types for SDK operations
+  
+  - Connection errors
+  - Subscription errors
+  - Parse errors
+  - Timeout errors
+</ResponseField>
+
+## Frames
+
+<ResponseField name="Frame" type="enum">
+  WebSocket frame types
+  
+  - `Entity` - Entity update
+  - `Snapshot` - Full snapshot
+  - `Subscribed` - Subscription confirmation
+</ResponseField>
+
+<ResponseField name="Operation" type="enum">
+  Entity operation type
+  
+  - `Upsert`
+  - `Patch`
+  - `Delete`
+</ResponseField>
+
+<ResponseField name="Mode" type="enum">
+  View streaming mode
+  
+  - `State`
+  - `List`
+  - `Append`
+</ResponseField>
+
+## Store
+
+<ResponseField name="SharedStore" type="struct">
+  Thread-safe entity store
+</ResponseField>
+
+<ResponseField name="StoreUpdate" type="enum">
+  Store update notification
+</ResponseField>
+
+## Streams
+
+<ResponseField name="EntityStream<T>" type="struct">
+  Stream of entity values
+  
+  Implements `Stream<Item = T>`
+</ResponseField>
+
+<ResponseField name="Update<T>" type="enum">
+  Entity update event
+  
+  ```rust
+  pub enum Update<T> {
+      Upsert { key: String, data: T },
+      Patch { key: String, data: T },
+      Delete { key: String },
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="RichUpdate<T>" type="enum">
+  Rich update with before/after states
+  
+  ```rust
+  pub enum RichUpdate<T> {
+      Created { key: String, data: T },
+      Updated { key: String, before: T, after: T, patch: Option<Value> },
+      Deleted { key: String, last_known: Option<T> },
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="UseStream<T>" type="struct">
+  Stream builder for entity subscriptions
+</ResponseField>
+
+<ResponseField name="RichEntityStream<T>" type="struct">
+  Stream of rich updates
+</ResponseField>
+
+<ResponseField name="FilteredStream<T>" type="struct">
+  Filtered entity stream
+</ResponseField>
+
+<ResponseField name="MapStream<T, U>" type="struct">
+  Mapped entity stream
+</ResponseField>
+
+<ResponseField name="FilterMapStream<T, U>" type="struct">
+  Filter-mapped entity stream
+</ResponseField>
+
+<ResponseField name="KeyFilter" type="enum">
+  Key filtering strategy
+</ResponseField>
+
+## Views
+
+<ResponseField name="Views<S>" type="struct">
+  Container for all views in a Stack
+</ResponseField>
+
+<ResponseField name="StateView<T>" type="struct">
+  View for single-key state queries
+  
+  ### Methods
+  
+  <ParamField path="use_" type="fn(&self, key: &str) -> UseBuilder<T>">
+    Create a stream builder for this key
+  </ParamField>
+  
+  <ParamField path="watch" type="fn(&self, key: &str) -> WatchBuilder<T>">
+    Watch for updates to this key
+  </ParamField>
+  
+  <ParamField path="rich_watch" type="fn(&self, key: &str) -> RichWatchBuilder<T>">
+    Watch for rich updates (with before/after)
+  </ParamField>
+  
+  <ParamField path="get" type="async fn(&self, key: &str) -> Option<T>">
+    Get current value synchronously
+  </ParamField>
+</ResponseField>
+
+<ResponseField name="ViewBuilder<T>" type="struct">
+  Builder for creating view streams with filters and options
+</ResponseField>
+
+<ResponseField name="UseBuilder<T>" type="struct">
+  Builder for entity value streams
+</ResponseField>
+
+<ResponseField name="WatchBuilder<T>" type="struct">
+  Builder for update streams
+</ResponseField>
+
+<ResponseField name="RichWatchBuilder<T>" type="struct">
+  Builder for rich update streams
+</ResponseField>
+
+<ResponseField name="ViewHandle<T>" type="struct">
+  Handle to an active view subscription
+</ResponseField>
+
+## Subscription
+
+<ResponseField name="Subscription" type="struct">
+  Active subscription to a view
+  
+  Automatically unsubscribes when dropped.
+</ResponseField>
+
+## Prelude
+
+The `prelude` module re-exports commonly used types:
+
+```rust
+use hyperstack_sdk::prelude::*;
+```
+
+Includes:
+- `HyperStack`
+- `Stack`
+- `ConnectionState`
+- `HyperStackError`
+- All view types
+- All stream types
+- `Update` and `RichUpdate`

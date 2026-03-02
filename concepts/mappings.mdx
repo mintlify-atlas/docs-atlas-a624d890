@@ -1,0 +1,721 @@
+---
+title: Field Mappings
+description: Understand how to map on-chain data to entity fields using Hyperstack's mapping attributes
+---
+
+Field mappings define how on-chain data flows into entity fields. This page covers all mapping types, population strategies, and transformations available in Hyperstack.
+
+## Overview
+
+Mappings connect on-chain events to entity fields using attributes:
+
+```rust
+#[entity(name = "Token")]
+pub struct Token {
+    // Map from instruction argument
+    #[map(CreateIx::mint)]
+    pub mint: String,
+    
+    // Map from account field
+    #[map(BondingCurve::virtual_sol_reserves)]
+    pub sol_reserves: u64,
+    
+    // Aggregate from multiple events
+    #[aggregate(from = BuyIx, field = amount, strategy = Sum)]
+    pub total_volume: u64,
+    
+    // Capture event history
+    #[event(from = TradeIx, strategy = Append)]
+    pub trades: Vec<TradeEvent>,
+}
+```
+
+## Mapping Types
+
+### #[map] - Direct Field Mapping
+
+Maps a field from an account or instruction directly to an entity field.
+
+#### Syntax
+
+```rust
+#[map(Source::field, ...options)]
+pub field_name: Type,
+```
+
+#### From Account Field
+
+```rust
+#[map(BondingCurve::virtual_sol_reserves)]
+pub sol_reserves: u64,
+```
+
+Extracts `virtual_sol_reserves` from `BondingCurve` account updates.
+
+#### From Instruction Argument
+
+```rust
+#[map(CreateIx::mint)]
+pub mint: String,
+```
+
+Extracts `mint` argument from `CreateIx` instruction.
+
+#### From Instruction Account
+
+```rust
+#[map(CreateIx::accounts::mint)]
+pub mint: String,
+```
+
+Extracts `mint` from the accounts of `CreateIx` instruction.
+
+#### Options
+
+| Option | Description | Example |
+|--------|-------------|----------|
+| `primary_key` | Mark as entity primary key | `#[map(CreateIx::mint, primary_key)]` |
+| `lookup_index` | Create reverse lookup | `#[map(Curve::mint, lookup_index)]` |
+| `strategy` | Population strategy | `#[map(..., strategy = LastWrite)]` |
+| `rename` | Rename field in output | `#[map(..., rename = "customName")]` |
+| `transform` | Apply transformation | `#[map(..., transform = Base58Encode)]` |
+| `condition` | Conditional update | `#[map(..., condition = "status == 1")]` |
+| `when` | Update only after instruction | `#[map(..., when = CompleteIx)]` |
+| `emit` | Include in mutations | `#[map(..., emit = false)]` |
+
+### #[from_instruction] - Instruction Source
+
+Alias for `#[map]` when mapping from instructions (legacy syntax).
+
+```rust
+#[from_instruction(CreateIx::mint, primary_key)]
+pub mint: String,
+```
+
+Equivalent to:
+```rust
+#[map(CreateIx::mint, primary_key)]
+pub mint: String,
+```
+
+### #[aggregate] - Computed Aggregations
+
+Aggregate values from multiple events over time.
+
+#### Syntax
+
+```rust
+#[aggregate(from = Source, field = source_field, strategy = Strategy)]
+pub field_name: Type,
+```
+
+#### Sum Strategy
+
+```rust
+#[aggregate(from = BuyIx, field = amount, strategy = Sum)]
+pub total_volume: u64,
+```
+
+Sums `amount` from all `BuyIx` events.
+
+#### Count Strategy
+
+```rust
+#[aggregate(from = BuyIx, strategy = Count)]
+pub trade_count: u64,
+```
+
+Counts number of `BuyIx` events.
+
+#### UniqueCount Strategy
+
+```rust
+#[aggregate(from = TradeIx, field = user, strategy = UniqueCount)]
+pub unique_traders: u64,
+```
+
+Counts unique values of `user` across all `TradeIx` events.
+
+#### Min/Max Strategy
+
+```rust
+#[aggregate(from = TradeIx, field = price, strategy = Max)]
+pub highest_price: u64,
+
+#[aggregate(from = TradeIx, field = price, strategy = Min)]
+pub lowest_price: u64,
+```
+
+#### Multiple Sources
+
+```rust
+// Sum volume from both buys and sells
+#[aggregate(from = BuyIx, field = sol_amount, strategy = Sum)]
+#[aggregate(from = SellIx, field = sol_amount, strategy = Sum)]
+pub total_volume: u64,
+```
+
+### #[event] - Capture Events
+
+Capture entire instruction payloads as event history.
+
+#### Syntax
+
+```rust
+#[event(from = Source, strategy = Append, ...options)]
+pub events: Vec<EventType>,
+```
+
+#### Basic Event Capture
+
+```rust
+#[event(from = TradeIx, strategy = Append)]
+pub trades: Vec<TradeEvent>,
+```
+
+**Generated Event Type:**
+```typescript
+interface TradeEvent {
+  timestamp: number;
+  slot: number;
+  signature: string;
+  data: TradeIx;  // Full instruction data
+}
+```
+
+#### With Field Selection
+
+```rust
+#[event(from = TradeIx, strategy = Append, capture = [user, amount, timestamp])]
+pub trades: Vec<TradeEvent>,
+```
+
+Captures only selected fields from the instruction.
+
+#### With Transformations
+
+```rust
+#[event(from = TradeIx, strategy = Append, transforms = { user: Base58Encode })]
+pub trades: Vec<TradeEvent>,
+```
+
+Applies transformations to specific fields.
+
+### #[capture] - Account Snapshots
+
+Capture full account state at a point in time.
+
+```rust
+#[capture(from = BondingCurve, strategy = LastWrite)]
+pub curve_snapshot: Option<BondingCurveSnapshot>,
+```
+
+**Generated Snapshot Type:**
+```typescript
+interface BondingCurveSnapshot {
+  timestamp: number;
+  slot: number;
+  signature: string;
+  account_address: string;
+  data: BondingCurve;  // Full account data
+}
+```
+
+### #[computed] - Derived Fields
+
+Compute values from other entity fields.
+
+#### Syntax
+
+```rust
+#[computed(expression)]
+pub field_name: Type,
+```
+
+#### Arithmetic
+
+```rust
+#[computed(sol_reserves / token_reserves)]
+pub price: Option<f64>,
+```
+
+#### Field References
+
+```rust
+#[computed(trading.total_volume / trading.trade_count)]
+pub avg_trade_size: Option<f64>,
+```
+
+#### Type Casts
+
+```rust
+#[computed((sol_reserves as f64) / (token_reserves as f64))]
+pub price_f64: Option<f64>,
+```
+
+#### Unwrap with Default
+
+```rust
+#[computed(optional_field.unwrap_or(0))]
+pub safe_value: u64,
+```
+
+#### Method Calls
+
+```rust
+#[computed(trades.len())]
+pub trade_count_computed: usize,
+```
+
+#### Context Access
+
+```rust
+#[computed(__slot)]  // Current slot
+pub last_update_slot: Option<u64>,
+
+#[computed(__timestamp)]  // Current timestamp
+pub last_update_time: i64,
+```
+
+### #[resolve] - External Data Enrichment
+
+Enrich entities with data from external sources (token metadata, URLs, etc.).
+
+#### Token Resolver
+
+```rust
+#[resolve(Token, strategy = SetOnce, extracts = [
+    (target = "metadata.name", source = "name"),
+    (target = "metadata.symbol", source = "symbol"),
+    (target = "metadata.decimals", source = "decimals"),
+])]
+pub mint: String,
+```
+
+Fetches token metadata from the mint address and extracts fields.
+
+#### URL Resolver
+
+```rust
+#[resolve(Url(url_path = "info.uri"), strategy = SetOnce, extracts = [
+    (target = "metadata.image", source = "image"),
+    (target = "metadata.description", source = "description"),
+])]
+pub uri: String,
+```
+
+Fetches JSON from a URL and extracts fields.
+
+## Population Strategies
+
+Strategies control how field values are updated when new events arrive.
+
+### SetOnce
+
+Set the field once, never overwrite.
+
+```rust
+#[map(CreateIx::mint, strategy = SetOnce)]
+pub mint: String,
+```
+
+**Behavior:**
+- First event sets the value
+- Subsequent events ignored
+- Use for immutable data (timestamps, creators, IDs)
+
+**Note:** `SetOnce` is the default for `primary_key` fields.
+
+### LastWrite
+
+Always use the latest value.
+
+```rust
+#[map(BondingCurve::virtual_sol_reserves, strategy = LastWrite)]
+pub sol_reserves: u64,
+```
+
+**Behavior:**
+- Every event overwrites the current value
+- Use for current state (balances, status, timestamps)
+
+**Note:** `LastWrite` is the default strategy for `#[map]` fields.
+
+### Append
+
+Collect values into an array.
+
+```rust
+#[event(from = TradeIx, strategy = Append)]
+pub trades: Vec<TradeEvent>,
+```
+
+**Behavior:**
+- Each event appends to the array
+- Array grows indefinitely (subject to `max_array_length`)
+- Mutations include only new items (delta transmission)
+- Use for event history
+
+**Capacity**: Default max 100 items per array (configurable via `StateTableConfig`).
+
+### Sum
+
+Running total of numeric values.
+
+```rust
+#[aggregate(from = BuyIx, field = amount, strategy = Sum)]
+pub total_volume: u64,
+```
+
+**Behavior:**
+- Each event adds to the current total
+- `total_volume += amount`
+- Use for cumulative metrics (volume, fees, rewards)
+
+### Count
+
+Count number of events.
+
+```rust
+#[aggregate(from = BuyIx, strategy = Count)]
+pub trade_count: u64,
+```
+
+**Behavior:**
+- Each event increments by 1
+- `trade_count += 1`
+- Use for event counters
+
+### Min / Max
+
+Track minimum or maximum value.
+
+```rust
+#[aggregate(from = TradeIx, field = price, strategy = Max)]
+pub highest_price: u64,
+
+#[aggregate(from = TradeIx, field = price, strategy = Min)]
+pub lowest_price: u64,
+```
+
+**Behavior:**
+- `Max`: Update if new value is greater
+- `Min`: Update if new value is lesser
+- Use for extremes (high/low prices, peak volume)
+
+### UniqueCount
+
+Count unique values.
+
+```rust
+#[aggregate(from = TradeIx, field = user, strategy = UniqueCount)]
+pub unique_traders: u64,
+```
+
+**Behavior:**
+- Maintains an internal `HashSet` of values
+- Field stores the count of unique values
+- Use for unique participants, distinct items
+
+### Merge
+
+Merge objects (experimental).
+
+```rust
+#[map(Account::config, strategy = Merge)]
+pub config: ConfigObject,
+```
+
+**Behavior:**
+- Deep merge of object fields
+- New fields added, existing fields overwritten
+
+## Transformations
+
+Transformations convert field values during extraction.
+
+### Base58Encode
+
+Encode bytes as base58 string.
+
+```rust
+#[map(Account::mint, transform = Base58Encode)]
+pub mint: String,  // Converts [u8; 32] → String
+```
+
+### Base58Decode
+
+Decode base58 string to bytes.
+
+```rust
+#[map(Instruction::mint_str, transform = Base58Decode)]
+pub mint_bytes: [u8; 32],  // Converts String → [u8; 32]
+```
+
+### HexEncode / HexDecode
+
+Encode/decode hexadecimal strings.
+
+```rust
+#[map(Account::data, transform = HexEncode)]
+pub data_hex: String,
+
+#[map(Instruction::hex_data, transform = HexDecode)]
+pub data_bytes: Vec<u8>,
+```
+
+### ToString
+
+Convert value to string.
+
+```rust
+#[map(Account::amount, transform = ToString)]
+pub amount_str: String,  // "1000000"
+```
+
+### ToNumber
+
+Parse string to number.
+
+```rust
+#[map(Instruction::amount_str, transform = ToNumber)]
+pub amount: u64,
+```
+
+## Advanced Mapping Features
+
+### Conditional Updates
+
+Update field only when a condition is true.
+
+```rust
+#[map(TradeIx::amount, condition = "trade_type == 0")]  // Only buys
+pub buy_amount: u64,
+
+#[map(TradeIx::amount, condition = "trade_type == 1")]  // Only sells
+pub sell_amount: u64,
+```
+
+**Supported Operators:**
+- `==`, `!=` - Equality
+- `>`, `>=`, `<`, `<=` - Comparison
+- `&&`, `||` - Logical AND/OR
+
+### When Clause
+
+Update field only after a specific instruction has been seen.
+
+```rust
+#[map(UpdateIx::score, when = CompleteIx)]
+pub final_score: u64,
+```
+
+**Behavior:**
+- Field updates are deferred until `CompleteIx` arrives
+- Deferred operations applied when `CompleteIx` is processed
+- Use for multi-step workflows
+
+### Stop Clause
+
+Stop updating field once a specific instruction is seen.
+
+```rust
+#[map(UpdateIx::score, stop = FinalizeIx)]
+pub running_score: u64,
+```
+
+**Behavior:**
+- Field updates normally until `FinalizeIx` arrives
+- After `FinalizeIx`, updates ignored
+- Use for finalized/frozen values
+
+### Join On
+
+Map fields from a different entity (cross-entity reference).
+
+```rust
+#[map(OtherEntity::field, join_on = "foreign_key")]
+pub referenced_value: u64,
+```
+
+### Lookup By
+
+Resolve primary key via a specific lookup index.
+
+```rust
+#[map(TradeIx::bonding_curve, lookup_by = bonding_curve)]
+pub curve_address: String,
+```
+
+### Temporal Field
+
+Create a time-based lookup index.
+
+```rust
+#[map(UpdateRoundIx::round_id, lookup_index, temporal_field = "timestamp")]
+pub round_id: u64,
+```
+
+Events are associated with the `round_id` active at their timestamp.
+
+### Emit Control
+
+Control whether a field is included in mutations.
+
+```rust
+#[map(Account::internal_state, emit = false)]
+pub internal: u64,  // Not sent to clients
+```
+
+Useful for:
+- Internal bookkeeping
+- Computed field inputs
+- Reducing bandwidth
+
+## Mapping Patterns
+
+### Multi-Source Aggregation
+
+Aggregate from multiple event types:
+
+```rust
+#[aggregate(from = BuyIx, field = sol_amount, strategy = Sum)]
+#[aggregate(from = SellIx, field = sol_amount, strategy = Sum)]
+pub total_volume: u64,
+```
+
+### Conditional Aggregation
+
+Aggregate with conditions:
+
+```rust
+// Count only large trades
+#[aggregate(from = TradeIx, strategy = Count, condition = "amount > 1000000")]
+pub large_trade_count: u64,
+
+// Sum only buys
+#[aggregate(from = TradeIx, field = amount, strategy = Sum, condition = "is_buy == true")]
+pub buy_volume: u64,
+```
+
+### Nested Field Access
+
+Access nested fields from source:
+
+```rust
+#[map(Account::config.max_supply)]
+pub max_supply: u64,
+
+#[map(Instruction::params.fee_basis_points)]
+pub fee_bps: u16,
+```
+
+### Default Values
+
+Provide fallback for missing fields:
+
+```rust
+#[map(Account::optional_value, default = 0)]
+pub value: u64,
+```
+
+## Examples
+
+### Token with Comprehensive Mappings
+
+```rust
+#[entity(name = "Token")]
+#[derive(Stream)]
+pub struct Token {
+    // Identity
+    #[map(CreateIx::mint, primary_key)]
+    pub mint: String,
+    
+    #[map(BondingCurve::mint, lookup_index)]
+    pub mint_lookup: String,
+    
+    // Metadata (enriched)
+    #[resolve(Token, strategy = SetOnce, extracts = [
+        (target = "metadata.name", source = "name"),
+        (target = "metadata.symbol", source = "symbol"),
+    ])]
+    pub name: Option<String>,
+    pub symbol: Option<String>,
+    
+    // Current state
+    #[map(BondingCurve::virtual_sol_reserves, strategy = LastWrite)]
+    pub sol_reserves: u64,
+    
+    #[map(BondingCurve::virtual_token_reserves, strategy = LastWrite)]
+    pub token_reserves: u64,
+    
+    // Computed
+    #[computed(sol_reserves / token_reserves)]
+    pub price: Option<f64>,
+    
+    // Aggregations
+    #[aggregate(from = BuyIx, field = sol_amount, strategy = Sum)]
+    #[aggregate(from = SellIx, field = sol_amount, strategy = Sum)]
+    pub total_volume: u64,
+    
+    #[aggregate(from = BuyIx, strategy = Count)]
+    #[aggregate(from = SellIx, strategy = Count)]
+    pub trade_count: u64,
+    
+    #[aggregate(from = BuyIx, field = user, strategy = UniqueCount)]
+    #[aggregate(from = SellIx, field = user, strategy = UniqueCount)]
+    pub unique_traders: u64,
+    
+    // History
+    #[event(from = BuyIx, strategy = Append)]
+    #[event(from = SellIx, strategy = Append)]
+    pub trades: Vec<TradeEvent>,
+    
+    // Snapshots
+    #[capture(from = BondingCurve, strategy = LastWrite)]
+    pub latest_curve: Option<BondingCurveSnapshot>,
+}
+```
+
+### User Profile with Conditions
+
+```rust
+#[entity(name = "UserProfile")]
+#[derive(Stream)]
+pub struct UserProfile {
+    #[map(TradeIx::user, primary_key)]
+    pub user: String,
+    
+    // Separate buy/sell volume
+    #[aggregate(from = TradeIx, field = amount, strategy = Sum, condition = "is_buy == true")]
+    pub buy_volume: u64,
+    
+    #[aggregate(from = TradeIx, field = amount, strategy = Sum, condition = "is_buy == false")]
+    pub sell_volume: u64,
+    
+    // Large trade count
+    #[aggregate(from = TradeIx, strategy = Count, condition = "amount > 1000000")]
+    pub whale_trades: u64,
+    
+    // Last trade timestamp
+    #[map(TradeIx::timestamp, strategy = LastWrite)]
+    pub last_trade_at: i64,
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Streams" icon="water" href="/concepts/streams">
+    Learn about stream definitions
+  </Card>
+  <Card title="Entities" icon="cube" href="/concepts/entities">
+    Understand entity structure
+  </Card>
+  <Card title="Computed Fields" icon="calculator" href="/concepts/mappings#computed-fields">
+    Derive values from fields
+  </Card>
+  <Card title="Resolvers" icon="globe" href="/concepts/mappings#resolve-external-data-enrichment">
+    Enrich with external data
+  </Card>
+</CardGroup>

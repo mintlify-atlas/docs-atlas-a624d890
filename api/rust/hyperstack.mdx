@@ -1,0 +1,157 @@
+---
+title: hyperstack
+description: Core HyperStack crate with feature flags and prelude exports
+---
+
+The main `hyperstack` crate provides a unified interface to all HyperStack components through feature flags and convenient re-exports.
+
+<Info>
+  View on [docs.rs](https://docs.rs/hyperstack)
+</Info>
+
+## Installation
+
+```toml
+[dependencies]
+hyperstack = "0.2"
+```
+
+Or with specific features:
+
+```toml
+[dependencies]
+hyperstack = { version = "0.2", features = ["full"] }
+```
+
+## Feature Flags
+
+<ParamField path="interpreter" type="feature" default="enabled">
+  AST transformation runtime and VM for processing blockchain events
+</ParamField>
+
+<ParamField path="macros" type="feature" default="enabled">
+  Procedural macros for defining stream specifications
+</ParamField>
+
+<ParamField path="server" type="feature" default="enabled">
+  WebSocket server and projection handlers
+</ParamField>
+
+<ParamField path="sdk" type="feature">
+  Rust client for connecting to HyperStack servers
+</ParamField>
+
+<ParamField path="runtime" type="feature">
+  Re-exports runtime dependencies for generated code
+</ParamField>
+
+## Module Re-exports
+
+The crate conditionally re-exports sub-crates based on enabled features:
+
+```rust
+pub use hyperstack_interpreter as interpreter;
+pub use hyperstack_macros as macros;
+pub use hyperstack_server as server;
+pub use hyperstack_sdk as sdk;
+```
+
+## Prelude
+
+The `prelude` module provides commonly used items:
+
+```rust
+use hyperstack::prelude::*;
+```
+
+### Types
+
+<ResponseField name="SerializableStreamSpec" type="struct">
+  Serializable AST representation of a stream specification
+</ResponseField>
+
+<ResponseField name="TypedStreamSpec" type="struct">
+  Type-safe stream specification with compile-time validation
+</ResponseField>
+
+<ResponseField name="MultiEntityBytecode" type="struct">
+  Compiled bytecode for multiple entity types
+</ResponseField>
+
+<ResponseField name="VmContext" type="struct">
+  Runtime context for the virtual machine
+</ResponseField>
+
+<ResponseField name="Mutation" type="struct">
+  Represents a state mutation with key, patch, and optional append operations
+</ResponseField>
+
+<ResponseField name="UpdateContext" type="struct">
+  Context passed to event handlers containing slot, signature, and timestamp
+</ResponseField>
+
+<ResponseField name="TokenMetadata" type="struct">
+  Resolved token metadata from external APIs
+</ResponseField>
+
+### Macros
+
+<ResponseField name="hyperstack" type="attribute macro">
+  Module-level attribute for defining streaming pipelines from IDL/Proto
+</ResponseField>
+
+<ResponseField name="Stream" type="derive macro">
+  Derive macro enabling stream field attributes like `#[map]`, `#[event]`, etc.
+</ResponseField>
+
+### Server Components
+
+<ResponseField name="BusManager" type="struct">
+  Message bus for broadcasting mutations across the system
+</ResponseField>
+
+<ResponseField name="ServerConfig" type="struct">
+  Configuration for HyperStack server instances
+</ResponseField>
+
+<ResponseField name="Projector" type="struct">
+  Processes blockchain events and maintains entity projections
+</ResponseField>
+
+### SDK Client
+
+<ResponseField name="HyperStack" type="struct">
+  Client for connecting to HyperStack streaming servers
+</ResponseField>
+
+## Resolvers
+
+The `resolvers` module provides types for external data resolution:
+
+<ResponseField name="TokenMetadata" type="struct">
+  Metadata for SPL tokens resolved via DAS API or similar services
+</ResponseField>
+
+## Runtime Helpers
+
+When the `runtime` feature is enabled, the crate exposes helper functions for generated code:
+
+```rust
+use hyperstack::runtime::serde_helpers::pubkey_base58;
+
+#[derive(Serialize, Deserialize)]
+struct MyAccount {
+    #[serde(with = "pubkey_base58")]
+    owner: [u8; 32],
+}
+```
+
+### Serde Helpers
+
+<ParamField path="pubkey_base58::serialize" type="fn">
+  Serialize `[u8; 32]` as base58 string
+</ParamField>
+
+<ParamField path="pubkey_base58::deserialize" type="fn">
+  Deserialize base58 string to `[u8; 32]`
+</ParamField>

@@ -1,0 +1,327 @@
+---
+title: "React Hooks"
+description: "Type-safe React hooks for querying Hyperstack data"
+---
+
+## useHyperstack
+
+The primary hook for connecting to a Hyperstack and accessing its views and instructions.
+
+### Signature
+
+```tsx
+function useHyperstack<TStack extends StackDefinition>(
+  stack: TStack,
+  options?: UseHyperstackOptions
+): StackClient<TStack>
+```
+
+### Parameters
+
+<ParamField path="stack" type="StackDefinition" required>
+  The stack definition containing views and instructions
+</ParamField>
+
+<ParamField path="options.url" type="string">
+  Override the stack's embedded WebSocket URL (useful for local development)
+  
+  ```tsx
+  useHyperstack(MY_STACK, { url: 'ws://localhost:3000' })
+  ```
+</ParamField>
+
+### Return Value
+
+The hook returns a `StackClient` object with:
+
+<ResponseField name="views" type="object">
+  Type-safe view hooks for all views defined in your stack
+</ResponseField>
+
+<ResponseField name="instructions" type="object">
+  Instruction executors and mutation hooks for all instructions in your stack
+</ResponseField>
+
+<ResponseField name="zustandStore" type="UseBoundStore<StoreApi<HyperStackStore>>">
+  Direct access to the Zustand store (for advanced use cases)
+</ResponseField>
+
+<ResponseField name="client" type="HyperStack<TStack>">
+  The underlying HyperStack client instance
+</ResponseField>
+
+<ResponseField name="connectionState" type="ConnectionState">
+  Current connection state: `'connected'` | `'connecting'` | `'disconnected'` | `'error'`
+</ResponseField>
+
+<ResponseField name="isConnected" type="boolean">
+  Convenience boolean for `connectionState === 'connected'`
+</ResponseField>
+
+<ResponseField name="isLoading" type="boolean">
+  True while establishing initial connection
+</ResponseField>
+
+<ResponseField name="error" type="Error | null">
+  Connection error if any
+</ResponseField>
+
+### Basic Example
+
+```tsx
+import { useHyperstack } from 'hyperstack-react';
+import { ORE_STREAM_STACK } from 'hyperstack-stacks/ore';
+
+function Dashboard() {
+  const { views, isConnected } = useHyperstack(ORE_STREAM_STACK);
+  
+  return (
+    <div>
+      <p>Connected: {isConnected}</p>
+    </div>
+  );
+}
+```
+
+## View Hooks
+
+View hooks provide type-safe access to real-time data from your Hyperstack. They automatically subscribe to updates and re-render when data changes.
+
+### State Views
+
+For views with `mode: 'state'`, use the `use()` hook:
+
+```tsx
+const { data, isLoading, error, refresh } = views.GroupName.viewName.use(
+  { keyField: 'value' },  // Optional key
+  { schema: MySchema }     // Optional options
+);
+```
+
+#### Parameters
+
+<ParamField path="key" type="Record<string, string>">
+  Optional key object to fetch a specific entity
+</ParamField>
+
+<ParamField path="options" type="ViewHookOptions">
+  Configuration options:
+  - `enabled?: boolean` - Enable/disable the subscription (default: `true`)
+  - `initialData?: T` - Initial data while loading
+  - `schema?: Schema<T>` - Zod schema for validation
+  - `refreshOnReconnect?: boolean` - Re-fetch on reconnection
+</ParamField>
+
+#### Return Value
+
+<ResponseField name="data" type="T | undefined">
+  The fetched entity, or `undefined` if loading or not found
+</ResponseField>
+
+<ResponseField name="isLoading" type="boolean">
+  True while fetching initial data
+</ResponseField>
+
+<ResponseField name="error" type="Error | undefined">
+  Error object if subscription failed
+</ResponseField>
+
+<ResponseField name="refresh" type="() => void">
+  Manually trigger a re-subscription
+</ResponseField>
+
+### List Views
+
+For views with `mode: 'list'`, use the `use()` or `useOne()` hooks:
+
+#### Fetch Multiple Items
+
+```tsx
+const { data, isLoading } = views.GroupName.viewName.use({
+  key: 'optional_key',
+  where: { status: 'active' },
+  limit: 10,
+  skip: 0,
+  schema: MySchema
+});
+// data: T[] | undefined
+```
+
+#### Fetch Single Item
+
+```tsx
+const { data, isLoading } = views.GroupName.viewName.use({
+  take: 1,
+  where: { id: 'abc' }
+});
+// data: T | undefined
+```
+
+Or use the `useOne()` convenience method:
+
+```tsx
+const { data } = views.GroupName.viewName.useOne({
+  where: { id: 'abc' },
+  schema: MySchema
+});
+// data: T | undefined
+```
+
+#### List Parameters
+
+<ParamField path="key" type="string">
+  Optional view key for partitioned data
+</ParamField>
+
+<ParamField path="where" type="Record<string, unknown>">
+  Client-side filtering conditions:
+  
+  ```tsx
+  where: { 
+    status: 'active',
+    count: { gte: 10, lte: 100 }
+  }
+  ```
+  
+  Supports: `gte`, `lte`, `gt`, `lt` for numeric comparisons
+</ParamField>
+
+<ParamField path="filters" type="Record<string, string>">
+  Server-side filters (sent in subscription request)
+</ParamField>
+
+<ParamField path="limit" type="number">
+  Client-side limit (applied after filtering)
+</ParamField>
+
+<ParamField path="take" type="number">
+  Number of items to fetch (1 for single item)
+</ParamField>
+
+<ParamField path="skip" type="number">
+  Number of items to skip (for pagination)
+</ParamField>
+
+<ParamField path="schema" type="Schema<T>">
+  Zod schema for validation. Invalid items are filtered out.
+</ParamField>
+
+## Schema Validation
+
+Use Zod schemas to validate and type data:
+
+```tsx
+import { z } from 'zod';
+
+const UserSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  age: z.number()
+});
+
+type User = z.infer<typeof UserSchema>;
+
+function UserList() {
+  const { data } = views.Users.list.use({ 
+    schema: UserSchema 
+  });
+  // data: User[] | undefined
+  // Invalid items are automatically filtered out
+}
+```
+
+## Advanced Patterns
+
+### Conditional Fetching
+
+```tsx
+function UserProfile({ userId }: { userId: string | null }) {
+  const { data } = views.Users.byId.use(
+    { id: userId ?? '' },
+    { enabled: !!userId }
+  );
+  
+  if (!userId) return null;
+  if (!data) return <div>Loading...</div>;
+  
+  return <div>{data.name}</div>;
+}
+```
+
+### Client-Side Filtering
+
+```tsx
+function ActiveUsers() {
+  const { data } = views.Users.list.use({
+    where: { 
+      status: 'active',
+      lastSeen: { gte: Date.now() - 3600000 } // Last hour
+    }
+  });
+  
+  return <ul>{data?.map(user => <li key={user.id}>{user.name}</li>)}</ul>;
+}
+```
+
+### Pagination
+
+```tsx
+function PaginatedList() {
+  const [page, setPage] = useState(0);
+  const pageSize = 10;
+  
+  const { data, isLoading } = views.Items.list.use({
+    skip: page * pageSize,
+    limit: pageSize
+  });
+  
+  return (
+    <div>
+      {data?.map(item => <div key={item.id}>{item.name}</div>)}
+      <button onClick={() => setPage(p => p + 1)}>Next</button>
+    </div>
+  );
+}
+```
+
+### Manual Refresh
+
+```tsx
+function RefreshableList() {
+  const { data, refresh } = views.Items.list.use();
+  
+  return (
+    <div>
+      <button onClick={refresh}>Refresh</button>
+      {data?.map(item => <div key={item.id}>{item.name}</div>)}
+    </div>
+  );
+}
+```
+
+## Zustand Integration
+
+Access the underlying Zustand store for custom selectors:
+
+```tsx
+function CustomSelector() {
+  const { zustandStore } = useHyperstack(MY_STACK);
+  
+  const count = zustandStore(state => 
+    state.entities.get('my_view')?.size ?? 0
+  );
+  
+  return <div>Total items: {count}</div>;
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Mutations" icon="pen-to-square" href="./mutations">
+    Learn how to execute instructions
+  </Card>
+  <Card title="Examples" icon="code" href="./examples">
+    See complete working examples
+  </Card>
+</CardGroup>

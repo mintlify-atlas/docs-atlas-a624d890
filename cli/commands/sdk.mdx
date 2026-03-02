@@ -1,0 +1,474 @@
+---
+title: hs sdk
+description: Generate TypeScript and Rust SDKs from deployed stacks
+---
+
+# hs sdk
+
+Generate type-safe client SDKs from your deployed stacks. The SDK generator creates fully-typed clients with WebSocket connection handling, query builders, and real-time subscriptions.
+
+## Subcommands
+
+- [`hs sdk create typescript`](#create-typescript) - Generate TypeScript SDK
+- [`hs sdk create rust`](#create-rust) - Generate Rust SDK
+- [`hs sdk list`](#list) - List available stacks
+
+---
+
+## create typescript
+
+Generate a TypeScript SDK from a stack.
+
+### Usage
+
+```bash
+hs sdk create typescript STACK_NAME [OPTIONS]
+```
+
+### Arguments
+
+<ParamField path="stack_name" type="string" required>
+  Name of the stack to generate SDK for
+</ParamField>
+
+### Options
+
+<ParamField path="--output" type="string">
+  Output file path (overrides config)
+  
+  If not specified, uses the `sdk.typescript.output` setting from `hyperstack.toml`.
+</ParamField>
+
+<ParamField path="--package-name" type="string">
+  Package name for the generated SDK
+  
+  Default: `@hyperstack/{stack-name}`
+</ParamField>
+
+<ParamField path="--url" type="string">
+  WebSocket URL for the stack (overrides config)
+  
+  Default: `wss://{stack-name}.stack.usehyperstack.com`
+</ParamField>
+
+### Examples
+
+#### Basic Usage
+
+```bash
+hs sdk create typescript nft-indexer
+```
+
+Output:
+```
+Generating TypeScript SDK for 'nft-indexer'...
+
+Fetching stack schema... ✓
+Generating types... ✓
+Generating query builders... ✓
+Generating subscription handlers... ✓
+
+SDK generated successfully!
+
+Output: ./sdk/typescript/index.ts
+Package: @hyperstack/nft-indexer
+Entries: 3 entities, 5 projections
+```
+
+#### Custom Output Path
+
+```bash
+hs sdk create typescript nft-indexer --output ./src/sdk/nft-indexer.ts
+```
+
+#### Custom Package Name
+
+```bash
+hs sdk create typescript nft-indexer --package-name "@my-org/nft-sdk"
+```
+
+#### Custom WebSocket URL
+
+```bash
+hs sdk create typescript nft-indexer --url wss://nft-indexer-staging.stack.usehyperstack.com
+```
+
+### Generated SDK Structure
+
+The TypeScript SDK includes:
+
+```typescript
+// Type definitions for all entities
+export interface NftTransfer {
+  id: string;
+  from: string;
+  to: string;
+  mint: string;
+  timestamp: number;
+}
+
+// Query builder
+export class NftIndexerClient {
+  constructor(url: string);
+  
+  // Connect to WebSocket
+  connect(): Promise<void>;
+  
+  // Subscribe to projections
+  subscribeToTransfers(
+    query?: TransferQuery,
+    callback?: (transfer: NftTransfer) => void
+  ): Subscription;
+  
+  // Disconnect
+  disconnect(): void;
+}
+
+// Query types
+export interface TransferQuery {
+  from?: string;
+  to?: string;
+  mint?: string;
+  limit?: number;
+}
+```
+
+### Using the Generated SDK
+
+```typescript
+import { NftIndexerClient } from './sdk/typescript';
+
+const client = new NftIndexerClient(
+  'wss://nft-indexer.stack.usehyperstack.com'
+);
+
+await client.connect();
+
+// Subscribe to transfers
+const subscription = client.subscribeToTransfers(
+  { mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' },
+  (transfer) => {
+    console.log('New transfer:', transfer);
+  }
+);
+
+// Unsubscribe
+subscription.unsubscribe();
+```
+
+---
+
+## create rust
+
+Generate a Rust SDK crate from a stack.
+
+### Usage
+
+```bash
+hs sdk create rust STACK_NAME [OPTIONS]
+```
+
+### Arguments
+
+<ParamField path="stack_name" type="string" required>
+  Name of the stack to generate SDK for
+</ParamField>
+
+### Options
+
+<ParamField path="--output" type="string">
+  Output directory path (overrides config)
+  
+  If not specified, uses the `sdk.rust.output` setting from `hyperstack.toml`.
+</ParamField>
+
+<ParamField path="--crate-name" type="string">
+  Crate name for the generated SDK
+  
+  Default: `{stack_name}_sdk`
+</ParamField>
+
+<ParamField path="--module" type="boolean">
+  Generate as a module (mod.rs) instead of a standalone crate
+  
+  Useful for embedding the SDK directly in your project.
+</ParamField>
+
+<ParamField path="--url" type="string">
+  WebSocket URL for the stack (overrides config)
+  
+  Default: `wss://{stack-name}.stack.usehyperstack.com`
+</ParamField>
+
+### Examples
+
+#### Basic Usage
+
+```bash
+hs sdk create rust nft-indexer
+```
+
+Output:
+```
+Generating Rust SDK for 'nft-indexer'...
+
+Fetching stack schema... ✓
+Generating types... ✓
+Generating client... ✓
+Generating Cargo.toml... ✓
+
+SDK generated successfully!
+
+Output: ./sdk/rust/
+Crate: nft_indexer_sdk
+Entries: 3 entities, 5 projections
+```
+
+#### Custom Output Path
+
+```bash
+hs sdk create rust nft-indexer --output ./crates/nft-sdk
+```
+
+#### Custom Crate Name
+
+```bash
+hs sdk create rust nft-indexer --crate-name nft_client
+```
+
+#### Generate as Module
+
+```bash
+hs sdk create rust nft-indexer --module --output ./src/nft
+```
+
+Generates `mod.rs` instead of a full crate structure.
+
+### Generated SDK Structure
+
+For a standalone crate:
+
+```
+sdk/rust/
+├── Cargo.toml
+└── src/
+    ├── lib.rs           # Main entry point
+    ├── types.rs         # Entity type definitions
+    ├── client.rs        # WebSocket client
+    └── queries.rs       # Query builders
+```
+
+For a module:
+
+```
+src/nft/
+├── mod.rs           # Module entry point
+├── types.rs
+├── client.rs
+└── queries.rs
+```
+
+### Generated Code
+
+```rust
+use serde::{Deserialize, Serialize};
+
+// Type definitions
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NftTransfer {
+    pub id: String,
+    pub from: String,
+    pub to: String,
+    pub mint: String,
+    pub timestamp: i64,
+}
+
+// Client
+pub struct NftIndexerClient {
+    url: String,
+    // ...
+}
+
+impl NftIndexerClient {
+    pub fn new(url: impl Into<String>) -> Self { /* ... */ }
+    
+    pub async fn connect(&mut self) -> Result<()> { /* ... */ }
+    
+    pub async fn subscribe_to_transfers(
+        &mut self,
+        query: Option<TransferQuery>,
+    ) -> Result<Receiver<NftTransfer>> { /* ... */ }
+}
+
+// Query types
+#[derive(Debug, Default, Serialize)]
+pub struct TransferQuery {
+    pub from: Option<String>,
+    pub to: Option<String>,
+    pub mint: Option<String>,
+    pub limit: Option<u32>,
+}
+```
+
+### Using the Generated SDK
+
+```rust
+use nft_indexer_sdk::{NftIndexerClient, TransferQuery};
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let mut client = NftIndexerClient::new(
+        "wss://nft-indexer.stack.usehyperstack.com"
+    );
+    
+    client.connect().await?;
+    
+    let mut transfers = client.subscribe_to_transfers(
+        Some(TransferQuery {
+            mint: Some("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v".into()),
+            ..Default::default()
+        })
+    ).await?;
+    
+    while let Some(transfer) = transfers.recv().await {
+        println!("New transfer: {:?}", transfer);
+    }
+    
+    Ok(())
+}
+```
+
+---
+
+## list
+
+List all available stacks from `hyperstack.toml`.
+
+### Usage
+
+```bash
+hs sdk list
+```
+
+### Example
+
+```bash
+hs sdk list
+```
+
+Output:
+```
+Available stacks:
+
+STACK NAME       FILE                          STATUS
+nft-indexer      stacks/nft-indexer.stack      pushed (v3)
+token-tracker    stacks/token-tracker.stack    pushed (v5)
+ore-monitor      stacks/ore-monitor.stack      local only
+```
+
+---
+
+## Configuration
+
+SDK generation settings are configured in `hyperstack.toml`:
+
+```toml hyperstack.toml
+[[stack]]
+name = "nft-indexer"
+ast_file = "stacks/nft-indexer.stack"
+
+[sdk.typescript]
+output = "./sdk/typescript"
+package_name = "@my-org/nft-indexer-sdk"
+url = "wss://nft-indexer.stack.usehyperstack.com"
+
+[sdk.rust]
+output = "./sdk/rust"
+crate_name = "nft_indexer_sdk"
+url = "wss://nft-indexer.stack.usehyperstack.com"
+```
+
+### Configuration Options
+
+#### TypeScript SDK
+
+- `output` - Output file path
+- `package_name` - NPM package name
+- `url` - WebSocket endpoint URL
+
+#### Rust SDK
+
+- `output` - Output directory path
+- `crate_name` - Rust crate name
+- `url` - WebSocket endpoint URL
+
+---
+
+## SDK Features
+
+Generated SDKs include:
+
+- **Type Safety** - Fully-typed entities and queries
+- **WebSocket Client** - Connection management and reconnection
+- **Query Builders** - Type-safe query construction
+- **Subscriptions** - Real-time data subscriptions
+- **Error Handling** - Comprehensive error types
+- **Async/Await** - Modern async patterns (Rust/TypeScript)
+
+---
+
+## Regenerating SDKs
+
+Regenerate SDKs after updating stack definitions:
+
+```bash
+# Push updated stack
+hs stack push nft-indexer
+
+# Regenerate SDKs
+hs sdk create typescript nft-indexer
+hs sdk create rust nft-indexer
+```
+
+---
+
+## Error Handling
+
+### Stack Not Found
+
+```
+Error: Stack 'nft-indexer' not found in hyperstack.toml
+```
+
+**Solution:** Add the stack to `hyperstack.toml` or check the stack name.
+
+### Stack Not Pushed
+
+```
+Error: Stack 'nft-indexer' has not been pushed to remote
+```
+
+**Solution:** Push the stack first:
+```bash
+hs stack push nft-indexer
+```
+
+### Invalid Output Path
+
+```
+Error: Output path is not writable: ./sdk/typescript
+```
+
+**Solution:** Ensure the directory exists and is writable.
+
+---
+
+## Return Codes
+
+- `0` - Success
+- `1` - Error
+
+## Related Commands
+
+- [`hs stack push`](/cli/commands/stack#push) - Push stacks before generating SDKs
+- [`hs explore`](/cli/commands/explore) - Explore stack schemas

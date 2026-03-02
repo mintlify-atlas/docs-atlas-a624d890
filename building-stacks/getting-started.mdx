@@ -1,0 +1,229 @@
+---
+title: Getting Started
+description: Build your first Hyperstack data pipeline in 15 minutes
+---
+
+Hyperstack turns Solana on-chain data into real-time streams for your applications. Instead of manually parsing accounts and managing WebSocket connections, you declare what data you want in Rust, and Hyperstack handles the rest.
+
+---
+
+## What You'll Build
+
+In this guide, you'll create a complete streaming data pipeline:
+
+1. **Define** your data model in Rust using the `#[hyperstack]` macro
+2. **Compile** to generate a stack specification
+3. **Deploy** to Hyperstack Cloud
+4. **Connect** from your application with a type-safe SDK
+
+---
+
+## Prerequisites
+
+Before you start, ensure you have:
+
+- **Rust 1.70+** ([install via rustup](https://rustup.rs/))
+- **Hyperstack CLI** (`cargo install hyperstack-cli`)
+- An IDL file for the Solana program you want to track
+
+:::tip[Need an IDL?]
+Check out [Finding IDLs](/building-stacks/finding-idls) to learn how to find or download IDL files for any Solana program.
+:::
+
+---
+
+## Quick Start
+
+### 1. Create a new Rust library
+
+```bash
+cargo new my-stack --lib
+cd my-stack
+```
+
+### 2. Add Hyperstack dependencies
+
+Update your `Cargo.toml`:
+
+```toml
+[dependencies]
+hyperstack = "{{VERSION}}"
+serde = { version = "1.0", features = ["derive"] }
+```
+
+### 3. Get an IDL file
+
+Place your program's IDL in an `idl/` directory:
+
+```bash
+mkdir -p idl
+curl -o idl/ore.json https://docs.usehyperstack.com/ore.json
+```
+
+### 4. Define your stack
+
+Open `src/lib.rs` and write your first entity:
+
+```rust
+use hyperstack::prelude::*;
+
+#[hyperstack(idl = "idl/ore.json")]
+pub mod my_stream {
+    use hyperstack::macros::Stream;
+    use serde::{Deserialize, Serialize};
+
+    // Define an entity representing an ORE mining round
+    #[entity(name = "OreRound")]
+    #[view(name = "latest", sort_by = "id.round_id", order = "desc")]
+    pub struct OreRound {
+        pub id: RoundId,
+        pub state: RoundState,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, Stream)]
+    pub struct RoundId {
+        #[map(ore_sdk::accounts::Round::id, primary_key, strategy = SetOnce)]
+        pub round_id: u64,
+
+        #[map(ore_sdk::accounts::Round::__account_address, lookup_index, strategy = SetOnce)]
+        pub round_address: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, Stream)]
+    pub struct RoundState {
+        #[map(ore_sdk::accounts::Round::total_deployed, strategy = LastWrite)]
+        pub total_deployed: Option<u64>,
+
+        #[map(ore_sdk::accounts::Round::total_winnings, strategy = LastWrite)]
+        pub total_winnings: Option<u64>,
+    }
+}
+```
+
+:::note[SDK Naming Convention]
+The `ore_sdk` prefix is generated from the IDL's program name. An IDL named "ore" produces `ore_sdk::accounts::*` and `ore_sdk::instructions::*`. Your IDL will generate a different prefix based on its metadata.
+:::
+
+### 5. Build your stack
+
+```bash
+cargo build
+```
+
+This generates a `.hyperstack/MyStream.stack.json` file containing your compiled stack specification.
+
+### 6. Initialize your project
+
+```bash
+hs init
+```
+
+This creates `hyperstack.toml` linking your local stack to the cloud:
+
+```toml
+[project]
+name = "my-stack"
+
+[[stacks]]
+name = "my-stream"
+stack = "MyStream"
+```
+
+### 7. Deploy to Hyperstack Cloud
+
+:::caution[Closed Beta]
+Hyperstack is currently in closed beta. You'll need an API key to deploy. [Contact us on X](https://x.com/usehyperstack) to request access.
+:::
+
+```bash
+hs up
+```
+
+**Expected output:**
+
+```text
+✔ Stack pushed (v1)
+✔ Build created (id: bld_123...)
+✔ Build completed
+🚀 Deployed to: wss://my-stack.stack.usehyperstack.com
+```
+
+### 8. Generate the SDK
+
+Create a typed SDK for your application:
+
+```bash
+hs sdk create typescript my-stream --output ./sdk
+```
+
+### 9. Connect from your app
+
+```typescript
+import { HyperStack } from "hyperstack-typescript";
+import { MyStream } from "./sdk";
+
+const hs = await HyperStack.connect(
+  "wss://my-stack.stack.usehyperstack.com",
+  { stack: MyStream }
+);
+
+for await (const round of hs.views.OreRound.latest.watch()) {
+  console.log(`Round #${round.id.round_id}`);
+  console.log(`Total deployed: ${round.state.total_deployed}`);
+}
+```
+
+---
+
+## What Just Happened?
+
+1. **You wrote Rust** — A declarative specification of what data you want
+2. **Hyperstack compiled it** — Into a portable `.stack.json` file
+3. **You deployed to the cloud** — Hyperstack manages all infrastructure
+4. **You got a WebSocket URL** — Your app streams updates in real-time
+5. **You used a typed SDK** — Full TypeScript/Rust type safety
+
+---
+
+## Development Workflow
+
+<Steps>
+
+1. **Edit** your stack definition in `src/lib.rs`
+
+2. **Build** with `cargo build` to regenerate the `.stack.json`
+
+3. **Deploy** with `hs up` to push changes to production
+
+4. **Regenerate SDK** with `hs sdk create` if entity structure changed
+
+</Steps>
+
+---
+
+## Next Steps
+
+- [Configuration](/building-stacks/configuration) — Learn about `hyperstack.toml` options
+- [Stack Definitions](/building-stacks/stack-definitions) — Deep dive into the declarative model
+- [Rust DSL](/building-stacks/rust-dsl) — Complete macro reference
+- [Your First Stack](/building-stacks/getting-started) — Full tutorial with ORE mining example
+
+---
+
+## Troubleshooting
+
+### Build fails with "IDL file not found"
+
+Ensure the IDL path in `#[hyperstack(idl = "...")]` is relative to your `Cargo.toml`.
+
+### "Stack file not found" during deployment
+
+Run `cargo build` first. The `#[hyperstack]` macro generates the `.stack.json` during compilation.
+
+### WebSocket connection fails
+
+Verify the URL from `hs up` matches what you're using in your app. Run `hs stack list` to see all deployed stacks.
+
+### Type errors in generated SDK
+
+Regenerate the SDK after changing your entity structure: `hs sdk create typescript my-stream --output ./sdk --force`

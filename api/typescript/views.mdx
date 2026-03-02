@@ -1,0 +1,368 @@
+---
+title: View Types
+description: Typed view interfaces for querying and streaming entity data
+---
+
+HyperStack provides type-safe view interfaces for accessing entity data in different modes: State (single key) and List (multiple entities).
+
+## Overview
+
+Views are automatically generated from your stream definitions and provide strongly-typed access to entity data with real-time updates.
+
+```typescript
+const client = await HyperStack.connect(MyStack);
+
+// State view - single entity by key
+const user = await client.views.users.state.get({ id: '123' });
+
+// List view - all entities
+for await (const user of client.views.users.list.use()) {
+  console.log(user);
+}
+```
+
+## View Interfaces
+
+<ResponseField name="TypedViews" type="type">
+  Container type for all views in a stack
+  
+  ```typescript
+  type TypedViews<TViews extends StackDefinition['views']> = {
+    [K in keyof TViews]: TypedViewGroup<TViews[K]>;
+  };
+  ```
+  
+  Automatically typed based on your stack definition.
+</ResponseField>
+
+<ResponseField name="TypedViewGroup" type="type">
+  Group of views for a single entity type
+  
+  ```typescript
+  type TypedViewGroup<TGroup extends ViewGroup> = {
+    state?: TypedStateView<...>;
+    list?: TypedListView<...>;
+  };
+  ```
+</ResponseField>
+
+## State Views
+
+<ResponseField name="TypedStateView<T>" type="interface">
+  View for querying single entities by key
+  
+  ### Methods
+  
+  <ParamField path="use" type="<TSchema = T>(key: string, options?: WatchOptions<TSchema>) => AsyncIterable<TSchema>">
+    Stream entity values for a specific key
+    
+    ```typescript
+    for await (const user of client.views.users.state.use('user-123')) {
+      console.log('Current user:', user);
+    }
+    ```
+  </ParamField>
+  
+  <ParamField path="watch" type="(key: string, options?: WatchOptions) => AsyncIterable<Update<T>>">
+    Stream update events for a specific key
+    
+    ```typescript
+    for await (const update of client.views.users.state.watch('user-123')) {
+      if (update.type === 'upsert') {
+        console.log('User created/updated:', update.data);
+      } else if (update.type === 'delete') {
+        console.log('User deleted:', update.key);
+      }
+    }
+    ```
+  </ParamField>
+  
+  <ParamField path="watchRich" type="(key: string, options?: WatchOptions) => AsyncIterable<RichUpdate<T>>">
+    Stream rich update events with before/after states
+    
+    ```typescript
+    for await (const update of client.views.users.state.watchRich('user-123')) {
+      if (update.type === 'updated') {
+        console.log('Before:', update.before);
+        console.log('After:', update.after);
+        console.log('Patch:', update.patch);
+      }
+    }
+    ```
+  </ParamField>
+  
+  <ParamField path="get" type="async (key: string) => Promise<T | null>">
+    Get current entity value by key
+    
+    ```typescript
+    const user = await client.views.users.state.get('user-123');
+    if (user) {
+      console.log('Found user:', user);
+    }
+    ```
+  </ParamField>
+  
+  <ParamField path="getSync" type="(key: string) => T | null | undefined">
+    Synchronously get entity (may return undefined if not loaded)
+    
+    ```typescript
+    const user = client.views.users.state.getSync('user-123');
+    // undefined = not loaded yet
+    // null = loaded but doesn't exist
+    // T = entity data
+    ```
+  </ParamField>
+</ResponseField>
+
+## List Views
+
+<ResponseField name="TypedListView<T>" type="interface">
+  View for querying multiple entities
+  
+  ### Methods
+  
+  <ParamField path="use" type="<TSchema = T>(options?: WatchOptions<TSchema>) => AsyncIterable<TSchema>">
+    Stream all entity values
+    
+    ```typescript
+    for await (const user of client.views.users.list.use()) {
+      console.log('User:', user);
+    }
+    ```
+    
+    With filters and pagination:
+    
+    ```typescript
+    for await (const user of client.views.users.list.use({
+      filters: { status: 'active' },
+      take: 10,
+      skip: 0,
+    })) {
+      console.log('Active user:', user);
+    }
+    ```
+  </ParamField>
+  
+  <ParamField path="watch" type="(options?: WatchOptions) => AsyncIterable<Update<T>>">
+    Stream update events for all entities
+    
+    ```typescript
+    for await (const update of client.views.users.list.watch()) {
+      switch (update.type) {
+        case 'upsert':
+          console.log('User upserted:', update.key, update.data);
+          break;
+        case 'patch':
+          console.log('User patched:', update.key, update.data);
+          break;
+        case 'delete':
+          console.log('User deleted:', update.key);
+          break;
+      }
+    }
+    ```
+  </ParamField>
+  
+  <ParamField path="watchRich" type="(options?: WatchOptions) => AsyncIterable<RichUpdate<T>>">
+    Stream rich update events with before/after states
+    
+    ```typescript
+    for await (const update of client.views.users.list.watchRich()) {
+      if (update.type === 'updated') {
+        console.log('Changed from', update.before, 'to', update.after);
+      }
+    }
+    ```
+  </ParamField>
+  
+  <ParamField path="get" type="async () => Promise<T[]>">
+    Get all current entities
+    
+    ```typescript
+    const users = await client.views.users.list.get();
+    console.log(`Found ${users.length} users`);
+    ```
+  </ParamField>
+  
+  <ParamField path="getSync" type="() => T[] | undefined">
+    Synchronously get all entities (undefined if not loaded)
+    
+    ```typescript
+    const users = client.views.users.list.getSync();
+    if (users) {
+      console.log(`${users.length} users loaded`);
+    }
+    ```
+  </ParamField>
+</ResponseField>
+
+## Watch Options
+
+<ResponseField name="WatchOptions" type="interface">
+  Options for watching/streaming views
+  
+  ```typescript
+  interface WatchOptions<TSchema = unknown> {
+    take?: number;
+    skip?: number;
+    filters?: Record<string, string>;
+    schema?: Schema<TSchema>;
+  }
+  ```
+  
+  <ParamField path="take" type="number">
+    Limit number of results
+  </ParamField>
+  
+  <ParamField path="skip" type="number">
+    Skip N results (pagination)
+  </ParamField>
+  
+  <ParamField path="filters" type="Record<string, string>">
+    Filter entities by field values
+  </ParamField>
+  
+  <ParamField path="schema" type="Schema<TSchema>">
+    Runtime validation schema (e.g., Zod)
+  </ParamField>
+</ResponseField>
+
+## View Definition
+
+<ResponseField name="ViewDef" type="interface">
+  Internal view definition
+  
+  ```typescript
+  interface ViewDef<T, TMode extends 'state' | 'list'> {
+    readonly mode: TMode;
+    readonly view: string;
+    readonly _entity?: T;
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="ViewGroup" type="interface">
+  Group of views for an entity
+  
+  ```typescript
+  interface ViewGroup {
+    state?: ViewDef<unknown, 'state'>;
+    list?: ViewDef<unknown, 'list'>;
+  }
+  ```
+</ResponseField>
+
+## Schema Validation
+
+<ResponseField name="Schema" type="interface">
+  Schema for runtime validation (compatible with Zod)
+  
+  ```typescript
+  interface Schema<T> {
+    safeParse: (input: unknown) => SchemaResult<T>;
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="SchemaResult" type="type">
+  Result of schema validation
+  
+  ```typescript
+  type SchemaResult<T> =
+    | { success: true; data: T }
+    | { success: false; error: unknown };
+  ```
+</ResponseField>
+
+## Helper Functions
+
+<ResponseField name="createTypedStateView" type="function">
+  Create a typed state view (internal use)
+  
+  ```typescript
+  function createTypedStateView<T>(
+    viewDef: ViewDef<T, 'state'>,
+    storage: StorageAdapter,
+    subscriptionRegistry: SubscriptionRegistry
+  ): TypedStateView<T>
+  ```
+</ResponseField>
+
+<ResponseField name="createTypedListView" type="function">
+  Create a typed list view (internal use)
+  
+  ```typescript
+  function createTypedListView<T>(
+    viewDef: ViewDef<T, 'list'>,
+    storage: StorageAdapter,
+    subscriptionRegistry: SubscriptionRegistry
+  ): TypedListView<T>
+  ```
+</ResponseField>
+
+<ResponseField name="createTypedViews" type="function">
+  Create all typed views from stack (internal use)
+  
+  ```typescript
+  function createTypedViews<TStack extends StackDefinition>(
+    stack: TStack,
+    storage: StorageAdapter,
+    subscriptionRegistry: SubscriptionRegistry
+  ): TypedViews<TStack['views']>
+  ```
+</ResponseField>
+
+## Example Usage
+
+```typescript
+import { HyperStack } from 'hyperstack-typescript';
+import { MyStack } from './generated/stack';
+import { z } from 'zod';
+
+const client = await HyperStack.connect(MyStack);
+
+// State view - single entity
+const user = await client.views.users.state.get('user-123');
+
+// List view - stream all entities
+for await (const user of client.views.users.list.use()) {
+  console.log('User:', user);
+}
+
+// With filters and pagination
+for await (const user of client.views.users.list.use({
+  filters: { status: 'active' },
+  take: 20,
+  skip: 0,
+})) {
+  console.log('Active user:', user);
+}
+
+// With schema validation
+const UserSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  email: z.string().email(),
+});
+
+for await (const user of client.views.users.list.use({
+  schema: UserSchema,
+})) {
+  // user is validated and typed
+  console.log(user.email.toLowerCase());
+}
+
+// Watch updates
+for await (const update of client.views.users.list.watch()) {
+  if (update.type === 'upsert') {
+    console.log('New/updated user:', update.data);
+  }
+}
+
+// Rich updates with before/after
+for await (const update of client.views.users.state.watchRich('user-123')) {
+  if (update.type === 'updated') {
+    console.log('Name changed from', update.before.name, 'to', update.after.name);
+  }
+}
+```

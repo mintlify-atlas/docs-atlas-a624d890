@@ -1,0 +1,226 @@
+---
+title: hs create
+description: Create a new Hyperstack project from a template
+---
+
+# hs create
+
+Create a new Hyperstack project from a pre-built template. Templates include example stack definitions, client code, and configuration.
+
+## Usage
+
+```bash
+hs create [NAME] [OPTIONS]
+```
+
+## Arguments
+
+<ParamField path="name" type="string">
+  Project name (creates a directory with this name)
+  
+  If not provided, you'll be prompted interactively.
+</ParamField>
+
+## Options
+
+<ParamField path="--template" type="string">
+  Template to use. Available templates:
+  - `react-ore` - React + TypeScript with ORE token indexer
+  - `rust-ore` - Rust example with ORE token indexer
+  
+  If not provided, you'll be prompted to select from available templates.
+</ParamField>
+
+<ParamField path="--offline" type="boolean">
+  Use cached templates only (no network)
+  
+  Useful when working without internet connection. Fails if the template isn't cached.
+</ParamField>
+
+<ParamField path="--force-refresh" type="boolean">
+  Force re-download templates even if cached
+  
+  Ensures you have the latest template version.
+</ParamField>
+
+<ParamField path="--skip-install" type="boolean">
+  Skip installing dependencies after creation
+  
+  By default, `npm install` or `cargo build` runs automatically.
+</ParamField>
+
+## Examples
+
+### Interactive Creation
+
+```bash
+hs create
+```
+
+You'll be prompted for:
+1. Project name
+2. Template selection
+
+### Create React Project
+
+```bash
+hs create my-nft-tracker --template react-ore
+```
+
+Output:
+```
+Creating project 'my-nft-tracker' from template 'react-ore'...
+
+Downloading template... ✓
+Extracting files... ✓
+Installing dependencies... ✓
+
+Project created successfully!
+
+Next steps:
+  cd my-nft-tracker
+  hs auth login
+  hs up
+```
+
+### Create Rust Project
+
+```bash
+hs create ore-indexer --template rust-ore
+```
+
+### Offline Mode
+
+```bash
+hs create my-project --template react-ore --offline
+```
+
+Uses the cached template without downloading.
+
+### Skip Dependency Installation
+
+```bash
+hs create my-project --template react-ore --skip-install
+```
+
+Create the project structure without running `npm install`.
+
+## Available Templates
+
+### react-ore
+
+A React + TypeScript project with:
+- ORE token transfer indexer stack
+- React frontend with TypeScript SDK
+- Real-time transfer visualization
+- WebSocket connection handling
+
+**Tech stack:**
+- React 18
+- TypeScript
+- Vite
+- hyperstack-react SDK
+
+### rust-ore
+
+A Rust project with:
+- ORE token transfer indexer stack
+- Rust client using hyperstack-sdk
+- Command-line interface
+
+**Tech stack:**
+- Rust 1.70+
+- hyperstack-sdk
+- tokio for async runtime
+
+## Project Structure
+
+After running `hs create my-project --template react-ore`:
+
+```
+my-project/
+├── stacks/
+│   └── ore-indexer.stack       # Stack definition
+├── src/
+│   ├── App.tsx                 # React app
+│   └── main.tsx                # Entry point
+├── hyperstack.toml              # Hyperstack configuration
+├── package.json                 # Dependencies
+├── tsconfig.json                # TypeScript config
+└── vite.config.ts               # Vite config
+```
+
+## Template Caching
+
+Templates are cached in:
+- **macOS/Linux**: `~/.cache/hyperstack/templates/`
+- **Windows**: `%LOCALAPPDATA%\hyperstack\templates\`
+
+### Clear Cache
+
+```bash
+rm -rf ~/.cache/hyperstack/templates/
+```
+
+## Next Steps After Creation
+
+```bash
+# Navigate to project
+cd my-project
+
+# Authenticate (if not already)
+hs auth login
+
+# Deploy the stack
+hs up
+
+# Start development server (for React template)
+npm run dev
+```
+
+## Error Handling
+
+### Directory Already Exists
+
+```
+Error: Directory 'my-project' already exists
+```
+
+**Solution:** Choose a different name or remove the existing directory.
+
+### Template Not Found
+
+```
+Error: Template 'invalid-template' not found
+```
+
+**Solution:** Use `--template react-ore` or `--template rust-ore`.
+
+### Network Error (Offline Mode)
+
+```
+Error: Template not cached and --offline mode enabled
+```
+
+**Solution:** Remove `--offline` flag to download the template.
+
+## Customizing Templates
+
+After creation, you can:
+
+1. **Modify the stack definition** in `stacks/*.stack`
+2. **Update configuration** in `hyperstack.toml`
+3. **Customize the client** in `src/`
+
+See [Stack Definition Guide](/concepts/stacks) for stack syntax.
+
+## Return Codes
+
+- `0` - Success
+- `1` - Error (network error, template not found, directory exists, etc.)
+
+## Related Commands
+
+- [`hs init`](/cli/commands/init) - Initialize config for existing stacks
+- [`hs up`](/cli/commands/up) - Deploy the created stack
+- [`hs sdk create`](/cli/commands/sdk) - Generate SDKs

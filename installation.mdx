@@ -1,0 +1,413 @@
+---
+title: Installation
+description: Install Hyperstack packages for Rust, TypeScript, React, and Python
+---
+
+# Installation
+
+Hyperstack provides SDKs for multiple languages. Choose the package that matches your application:
+
+<CardGroup cols={2}>
+  <Card title="Rust" icon="rust" href="#rust">
+    High-performance client for Rust applications
+  </Card>
+  <Card title="TypeScript" icon="js" href="#typescript">
+    Framework-agnostic SDK for Node.js and browsers
+  </Card>
+  <Card title="React" icon="react" href="#react">
+    React hooks for easy integration
+  </Card>
+  <Card title="Python" icon="python" href="#python">
+    Python client (work in progress)
+  </Card>
+</CardGroup>
+
+## Rust
+
+The Rust SDK provides the highest performance option with full type safety.
+
+### Install via Cargo
+
+Add to your `Cargo.toml`:
+
+```toml Cargo.toml
+[dependencies]
+hyperstack = "0.5"
+```
+
+### Package features
+
+The `hyperstack` crate is an umbrella package that re-exports all components:
+
+```toml Cargo.toml
+[dependencies]
+# Default: interpreter, macros, and server
+hyperstack = "0.5"
+
+# Full installation (includes SDK)
+hyperstack = { version = "0.5", features = ["full"] }
+
+# Client SDK only
+hyperstack = { version = "0.5", features = ["sdk"] }
+```
+
+| Feature | Components | Use case |
+|---------|-----------|----------|
+| `default` | interpreter, macros, server | Building stacks |
+| `full` | interpreter, macros, server, sdk | Everything |
+| `sdk` | Client SDK only | Client applications |
+| `interpreter` | AST runtime | Custom integrations |
+| `macros` | Stream definition macros | Stack development |
+| `server` | WebSocket server | Self-hosted deployments |
+
+### Individual packages
+
+You can also install components individually:
+
+<CodeGroup>
+```toml Client SDK
+[dependencies]
+hyperstack-sdk = "0.5"
+```
+
+```toml Server
+[dependencies]
+hyperstack-server = "0.5"
+```
+
+```toml CLI
+[dependencies]
+hyperstack-cli = "0.5"
+```
+
+```toml Macros
+[dependencies]
+hyperstack-macros = "0.5"
+```
+</CodeGroup>
+
+### Install CLI
+
+The Hyperstack CLI is used for deploying stacks and generating SDKs:
+
+```bash
+cargo install hyperstack-cli
+```
+
+Verify installation:
+
+```bash
+hs --version
+```
+
+### TLS options
+
+By default, the SDK uses `rustls` for TLS. Switch to native TLS if needed:
+
+```toml Cargo.toml
+[dependencies]
+hyperstack-sdk = { version = "0.5", default-features = false, features = ["native-tls"] }
+```
+
+### Example usage
+
+```rust main.rs
+use hyperstack_sdk::prelude::*;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let hs = HyperStack::connect("wss://mainnet.hyperstack.xyz").await?;
+    
+    let mut stream = hs.watch::<MyEntity>();
+    while let Some(update) = stream.next().await {
+        println!("Update: {:?}", update.data());
+    }
+    
+    Ok(())
+}
+```
+
+## TypeScript
+
+The TypeScript SDK is framework-agnostic and works with Node.js, Vue, Svelte, or vanilla JavaScript.
+
+### Install via npm
+
+<CodeGroup>
+```bash npm
+npm install hyperstack-typescript
+```
+
+```bash yarn
+yarn add hyperstack-typescript
+```
+
+```bash pnpm
+pnpm add hyperstack-typescript
+```
+</CodeGroup>
+
+### Requirements
+
+- Node.js 16.0.0 or higher
+- TypeScript 5.0 or higher (for TypeScript projects)
+
+### Dependencies
+
+The package includes these dependencies:
+
+- `pako` - Compression support
+- `zod` - Runtime type validation
+
+### Example usage
+
+```typescript main.ts
+import { HyperStack } from 'hyperstack-typescript';
+import { MY_STACK } from './generated/my-stack';
+
+const hs = await HyperStack.connect('wss://mainnet.hyperstack.xyz', {
+  stack: MY_STACK,
+});
+
+for await (const update of hs.views.myEntity.list.watch()) {
+  console.log('Update:', update.data);
+}
+```
+
+### Module formats
+
+The package supports both ESM and CommonJS:
+
+```typescript
+// ESM
+import { HyperStack } from 'hyperstack-typescript';
+
+// CommonJS
+const { HyperStack } = require('hyperstack-typescript');
+```
+
+## React
+
+The React SDK provides hooks and components for easy integration with React applications.
+
+### Install via npm
+
+<CodeGroup>
+```bash npm
+npm install hyperstack-react
+```
+
+```bash yarn
+yarn add hyperstack-react
+```
+
+```bash pnpm
+pnpm add hyperstack-react
+```
+</CodeGroup>
+
+### Requirements
+
+- Node.js 16.0.0 or higher
+- React 18.0.0 or 19.0.0
+- Zustand 4.0.0 or 5.0.0 (peer dependency)
+
+### Peer dependencies
+
+The React SDK requires these peer dependencies:
+
+```json package.json
+{
+  "dependencies": {
+    "hyperstack-react": "^0.5.3",
+    "react": "^18.0.0 || ^19.0.0",
+    "zustand": "^4.0.0 || ^5.0.0"
+  }
+}
+```
+
+### Included dependencies
+
+The package automatically includes:
+
+- `hyperstack-typescript` - The core TypeScript SDK
+- `zustand` - State management (also required as peer dependency)
+
+### Example usage
+
+```tsx App.tsx
+import { HyperstackProvider, useHyperstack } from 'hyperstack-react';
+import { MY_STACK } from './generated/my-stack';
+
+function App() {
+  return (
+    <HyperstackProvider autoConnect={true}>
+      <Dashboard />
+    </HyperstackProvider>
+  );
+}
+
+function Dashboard() {
+  const { views, isConnected } = useHyperstack(MY_STACK);
+  const { data } = views.myEntity.list.useOne();
+  
+  return <div>{data?.name}</div>;
+}
+```
+
+### Using with Next.js
+
+For Next.js applications, ensure the SDK is imported client-side:
+
+```tsx
+'use client';
+
+import { HyperstackProvider } from 'hyperstack-react';
+
+export default function Providers({ children }) {
+  return (
+    <HyperstackProvider autoConnect={true}>
+      {children}
+    </HyperstackProvider>
+  );
+}
+```
+
+### Relationship with hyperstack-typescript
+
+The React SDK depends on and re-exports the core TypeScript SDK. You can import from either package:
+
+```typescript
+// Both work the same
+import { HyperStack } from 'hyperstack-react';
+import { HyperStack } from 'hyperstack-typescript';
+```
+
+## Python
+
+<Warning>
+  The Python SDK is currently under active development and has **not yet been published** to PyPI.
+</Warning>
+
+### Requirements
+
+- Python 3.9 or higher
+
+### Install from source
+
+For development and testing, you can install from source:
+
+```bash
+git clone https://github.com/HyperTekOrg/hyperstack.git
+cd hyperstack/python/hyperstack-sdk
+pip install -e .
+```
+
+### Planned features
+
+- Real-time WebSocket streaming
+- Solana program state subscriptions
+- Async/await support
+- Type hints with Pydantic
+
+### Example usage (preview)
+
+```python
+from hyperstack import HyperstackClient
+
+# Initialize client
+client = HyperstackClient()
+
+# Connect and subscribe to program data
+await client.connect()
+```
+
+<Note>
+  The Python SDK API is subject to change before the initial release. Check the [GitHub repository](https://github.com/HyperTekOrg/hyperstack) for the latest updates.
+</Note>
+
+## Generating SDKs
+
+Once you have a stack deployed, you can generate type-safe SDKs using the Hyperstack CLI.
+
+### Prerequisites
+
+Install the CLI (Rust required):
+
+```bash
+cargo install hyperstack-cli
+```
+
+### Generate TypeScript SDK
+
+```bash
+# List available stacks
+hs sdk list
+
+# Generate TypeScript SDK
+hs sdk create typescript my-stack
+
+# With custom output directory
+hs sdk create typescript my-stack --output ./generated
+```
+
+This creates a typed SDK in `./generated/my-stack-stack/`.
+
+### Generate Rust SDK
+
+```bash
+hs sdk create rust my-stack
+
+# With custom output and crate name
+hs sdk create rust my-stack --output ./crates/my-sdk --crate-name my-sdk
+```
+
+Add the generated crate to your `Cargo.toml`:
+
+```toml Cargo.toml
+[dependencies]
+hyperstack-sdk = "0.5"
+my-stack = { path = "./generated/my-stack-stack" }
+```
+
+### SDK structure
+
+Generated SDKs include:
+
+- **Type definitions**: Structs and schemas for all entities
+- **View accessors**: Typed methods for accessing views
+- **Entity traits**: Implementations for streaming and querying
+
+## Version compatibility
+
+All Hyperstack packages follow synchronized versioning:
+
+| Package | Version | Registry |
+|---------|---------|----------|
+| hyperstack | 0.5.3 | [crates.io](https://crates.io/crates/hyperstack) |
+| hyperstack-sdk | 0.5.3 | [crates.io](https://crates.io/crates/hyperstack-sdk) |
+| hyperstack-cli | 0.5.3 | [crates.io](https://crates.io/crates/hyperstack-cli) |
+| hyperstack-typescript | 0.5.3 | [npm](https://www.npmjs.com/package/hyperstack-typescript) |
+| hyperstack-react | 0.5.3 | [npm](https://www.npmjs.com/package/hyperstack-react) |
+| hyperstack-sdk (Python) | unreleased | PyPI |
+
+<Note>
+  Client SDKs are forward-compatible with minor version bumps. Server version 0.5.x works with client versions 0.5.0 through 0.5.x.
+</Note>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Build your first Hyperstack application
+  </Card>
+  <Card title="CLI Reference" icon="terminal" href="/cli/commands">
+    Learn how to deploy and manage stacks
+  </Card>
+  <Card title="Core Concepts" icon="book" href="/concepts/overview">
+    Understand stacks, views, and projections
+  </Card>
+  <Card title="Stack API" icon="code" href="/concepts/stack-api">
+    Explore the complete API reference
+  </Card>
+</CardGroup>

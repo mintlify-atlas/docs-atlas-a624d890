@@ -1,0 +1,330 @@
+---
+title: hs up
+description: Deploy a stack - push, build, and watch until completion
+---
+
+# hs up
+
+Deploy a stack to production. This command combines push, build, and deploy into a single operation and watches progress until completion.
+
+## Usage
+
+```bash
+hs up [STACK_NAME] [OPTIONS]
+```
+
+## Arguments
+
+<ParamField path="stack_name" type="string">
+  Name of the specific stack to deploy
+  
+  If not provided, deploys all stacks defined in `hyperstack.toml`.
+</ParamField>
+
+## Options
+
+<ParamField path="--branch" type="string">
+  Deploy to a specific branch environment
+  
+  Creates a branch deployment at `{stack-name}-{branch}.stack.usehyperstack.com`.
+  
+  Example: `--branch staging` deploys to `my-stack-staging.stack.usehyperstack.com`
+</ParamField>
+
+<ParamField path="--preview" type="boolean">
+  Create a preview deployment with auto-generated branch name
+  
+  Useful for pull request previews. Generates a unique branch name like `preview-a8f3d2`.
+  
+  Conflicts with `--branch`.
+</ParamField>
+
+<ParamField path="--dry-run" type="boolean">
+  Show what would be deployed without actually deploying
+  
+  Validates configuration and shows the deployment plan.
+</ParamField>
+
+## Deployment Flow
+
+The `up` command performs these steps:
+
+1. **Push** - Upload stack definitions to remote
+2. **Build** - Compile and containerize the stack
+3. **Deploy** - Start the stack on Hyperstack infrastructure
+4. **Watch** - Monitor deployment progress until live
+
+## Examples
+
+### Deploy All Stacks
+
+```bash
+hs up
+```
+
+Output:
+```
+Pushing stacks...
+✓ nft-indexer (version 3)
+✓ token-tracker (version 5)
+
+Creating builds...
+✓ nft-indexer (build #12)
+✓ token-tracker (build #18)
+
+Deploying...
+  nft-indexer: Building... 45%
+  token-tracker: Deploying... 100% ✓
+
+Deployment successful!
+
+Endpoints:
+  nft-indexer: wss://nft-indexer.stack.usehyperstack.com
+  token-tracker: wss://token-tracker.stack.usehyperstack.com
+```
+
+### Deploy Specific Stack
+
+```bash
+hs up nft-indexer
+```
+
+Only deploys the `nft-indexer` stack.
+
+### Branch Deployment
+
+```bash
+hs up nft-indexer --branch staging
+```
+
+Deploys to: `wss://nft-indexer-staging.stack.usehyperstack.com`
+
+Useful for:
+- Staging environments
+- Testing before production
+- Feature branches
+
+### Preview Deployment
+
+```bash
+hs up --preview
+```
+
+Generates a unique preview environment:
+```
+Creating preview deployment...
+Branch: preview-a8f3d2
+
+Deployment successful!
+
+Endpoints:
+  nft-indexer: wss://nft-indexer-preview-a8f3d2.stack.usehyperstack.com
+```
+
+### Dry Run
+
+```bash
+hs up --dry-run
+```
+
+Output:
+```
+Dry run - no changes will be made
+
+Would deploy:
+  Stack: nft-indexer
+  File: stacks/nft-indexer.stack
+  Current version: 2
+  New version: 3 (if changed)
+  Endpoint: wss://nft-indexer.stack.usehyperstack.com
+
+  Stack: token-tracker
+  File: stacks/token-tracker.stack
+  Current version: 4
+  New version: 5 (if changed)
+  Endpoint: wss://token-tracker.stack.usehyperstack.com
+```
+
+## Build Progress
+
+During deployment, you'll see real-time progress:
+
+```
+Building nft-indexer (build #12)...
+
+[1/4] Parsing stack definition... ✓
+[2/4] Compiling transformations... ✓
+[3/4] Building container image... 67%
+[4/4] Deploying to infrastructure...
+```
+
+## Deployment Stages
+
+### 1. Push Stage
+
+Uploads stack definitions to Hyperstack:
+
+```
+Pushing stacks...
+  nft-indexer: Reading stacks/nft-indexer.stack... ✓
+  nft-indexer: Uploading... ✓
+  nft-indexer: Version 3 created
+```
+
+### 2. Build Stage
+
+Creates a new build:
+
+```
+Creating build for nft-indexer...
+  Build ID: 12
+  Status: pending
+```
+
+### 3. Compilation Stage
+
+```
+Compiling transformations...
+  Entities: 3
+  Projections: 5
+  Handlers: 12
+```
+
+### 4. Deployment Stage
+
+```
+Deploying to infrastructure...
+  Container: building
+  Registry: pushing
+  Kubernetes: deploying
+  Status: live ✓
+```
+
+## Error Handling
+
+### Configuration Error
+
+```
+Error: hyperstack.toml not found
+```
+
+**Solution:** Run `hs init` or `hs create` first.
+
+### Authentication Required
+
+```
+Error: Not authenticated
+```
+
+**Solution:** Run `hs auth login`.
+
+### Stack File Not Found
+
+```
+Error: Stack file not found: stacks/nft-indexer.stack
+```
+
+**Solution:** Verify the path in `hyperstack.toml` is correct.
+
+### Build Failed
+
+```
+Error: Build failed
+
+Build ID: 12
+Status: failed
+Error: Syntax error in stack definition at line 23
+```
+
+**Solution:** Fix the syntax error and run `hs up` again.
+
+### Deployment Failed
+
+```
+Error: Deployment failed
+
+Build ID: 12
+Status: completed
+Deployment status: failed
+Error: Insufficient resources
+```
+
+**Solution:** Check your plan limits or contact support.
+
+## Watching Progress
+
+The command watches deployment progress by default. To deploy without watching:
+
+```bash
+hs stack push && hs build create my-stack --no-wait
+```
+
+See [`hs build`](/cli/commands/build) for low-level build management.
+
+## Branch Naming Conventions
+
+Branch deployments follow this pattern:
+
+- **Production**: `{stack-name}.stack.usehyperstack.com`
+- **Branch**: `{stack-name}-{branch}.stack.usehyperstack.com`
+- **Preview**: `{stack-name}-preview-{random}.stack.usehyperstack.com`
+
+Branch names must:
+- Be lowercase alphanumeric with hyphens
+- Not start or end with a hyphen
+- Be 1-63 characters
+
+## Rollback
+
+If a deployment has issues, rollback to a previous version:
+
+```bash
+hs stack rollback my-stack
+```
+
+See [`hs stack rollback`](/cli/commands/stack#rollback) for details.
+
+## CI/CD Integration
+
+### GitHub Actions
+
+```yaml .github/workflows/deploy.yml
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Install CLI
+        run: cargo install hyperstack-cli
+      
+      - name: Authenticate
+        run: hs auth login --key ${{ secrets.HYPERSTACK_API_KEY }}
+      
+      - name: Deploy to Production
+        if: github.ref == 'refs/heads/main'
+        run: hs up
+      
+      - name: Deploy Preview
+        if: github.event_name == 'pull_request'
+        run: hs up --preview
+```
+
+## Return Codes
+
+- `0` - Deployment successful
+- `1` - Deployment failed
+
+## Related Commands
+
+- [`hs stack push`](/cli/commands/stack#push) - Push stacks without building
+- [`hs build create`](/cli/commands/build#create) - Create build manually
+- [`hs stack rollback`](/cli/commands/stack#rollback) - Rollback deployment
+- [`hs stack show`](/cli/commands/stack#show) - View deployment status

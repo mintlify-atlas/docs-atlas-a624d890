@@ -1,0 +1,287 @@
+---
+title: hyperstack-macros
+description: Procedural macros for defining HyperStack streams
+---
+
+The `hyperstack-macros` crate provides procedural macros for transforming annotated Rust structs into full streaming pipeline specifications.
+
+<Info>
+  View on [docs.rs](https://docs.rs/hyperstack-macros)
+</Info>
+
+## Installation
+
+```toml
+[dependencies]
+hyperstack-macros = "0.2"
+```
+
+## Attribute Macro
+
+<ResponseField name="#[hyperstack]" type="attribute macro">
+  Transform a module or struct into a streaming pipeline specification
+  
+  ### Module Usage (IDL-based)
+  
+  ```rust
+  #[hyperstack(idl = "idl.json")]
+  pub mod my_stream {
+      #[entity(name = "MyEntity")]
+      #[derive(Stream)]
+      struct Entity {
+          #[map(from = "MyAccount", field = "value")]
+          pub value: u64,
+      }
+  }
+  ```
+  
+  ### Proto-based Usage
+  
+  ```rust
+  #[hyperstack(proto = ["events.proto"])]
+  pub mod my_stream {
+      // entity structs
+  }
+  ```
+  
+  ### Attributes
+  
+  <ParamField path="idl" type="string">
+    Path to Anchor IDL JSON file
+  </ParamField>
+  
+  <ParamField path="proto" type="array<string>">
+    List of protobuf definition files
+  </ParamField>
+</ResponseField>
+
+## Derive Macro
+
+<ResponseField name="#[derive(Stream)]" type="derive macro">
+  Marker derive enabling stream field attributes
+  
+  Must be used with `#[entity(name = "...")]` attribute.
+  
+  ```rust
+  #[entity(name = "MyEntity")]
+  #[derive(Stream)]
+  struct Entity {
+      // fields with mapping attributes
+  }
+  ```
+</ResponseField>
+
+## Field Attributes
+
+The following attributes can be applied to struct fields when using `#[derive(Stream)]`:
+
+### Mapping Attributes
+
+<ResponseField name="#[map(...)]" type="field attribute">
+  Map from account fields
+  
+  ```rust
+  #[map(from = "MyAccount", field = "balance")]
+  pub balance: u64,
+  ```
+  
+  <ParamField path="from" type="string" required>
+    Source account type name
+  </ParamField>
+  
+  <ParamField path="field" type="string" required>
+    Field name in the source account
+  </ParamField>
+  
+  <ParamField path="key" type="string">
+    Custom key expression
+  </ParamField>
+</ResponseField>
+
+<ResponseField name="#[from_instruction(...)]" type="field attribute">
+  Map from instruction arguments
+  
+  ```rust
+  #[from_instruction(name = "Initialize", arg = "amount")]
+  pub amount: u64,
+  ```
+  
+  <ParamField path="name" type="string" required>
+    Instruction name
+  </ParamField>
+  
+  <ParamField path="arg" type="string" required>
+    Argument name
+  </ParamField>
+  
+  <ParamField path="account" type="string">
+    Account to use as key source
+  </ParamField>
+</ResponseField>
+
+### Event Attributes
+
+<ResponseField name="#[event(...)]" type="field attribute">
+  Capture instruction events in an append-only field
+  
+  ```rust
+  #[event(instruction = "Transfer")]
+  pub transfers: Vec<EventWrapper<TransferEvent>>,
+  ```
+  
+  Events are wrapped in `EventWrapper<T>` with metadata.
+  
+  <ParamField path="instruction" type="string" required>
+    Instruction name to capture
+  </ParamField>
+  
+  <ParamField path="limit" type="number">
+    Maximum number of events to retain
+  </ParamField>
+</ResponseField>
+
+<ResponseField name="#[snapshot(...)]" type="field attribute">
+  Capture entire account or instruction data
+  
+  ```rust
+  #[snapshot(from = "MyAccount", limit = 10)]
+  pub snapshots: Vec<CaptureWrapper<MyAccount>>,
+  ```
+  
+  <ParamField path="from" type="string" required>
+    Account type to capture
+  </ParamField>
+  
+  <ParamField path="limit" type="number">
+    Maximum number of snapshots to retain
+  </ParamField>
+</ResponseField>
+
+### Aggregation Attributes
+
+<ResponseField name="#[aggregate(...)]" type="field attribute">
+  Aggregate field values across updates
+  
+  ```rust
+  #[aggregate(op = "sum", from = "amount")]
+  pub total: u64,
+  ```
+  
+  <ParamField path="op" type="string" required>
+    Aggregation operation: `sum`, `min`, `max`, `count`, `avg`
+  </ParamField>
+  
+  <ParamField path="from" type="string" required>
+    Source field to aggregate
+  </ParamField>
+</ResponseField>
+
+### Computed Attributes
+
+<ResponseField name="#[computed(...)]" type="field attribute">
+  Compute field from other fields
+  
+  ```rust
+  #[computed(expr = "balance * price")]
+  pub value_usd: f64,
+  ```
+  
+  <ParamField path="expr" type="string" required>
+    Expression to compute the value
+  </ParamField>
+</ResponseField>
+
+<ResponseField name="#[derive_from(...)]" type="field attribute">
+  Derive values from instruction data
+  
+  ```rust
+  #[derive_from(instruction = "Mint", expr = "args.amount")]
+  pub minted: u64,
+  ```
+  
+  <ParamField path="instruction" type="string" required>
+    Instruction name
+  </ParamField>
+  
+  <ParamField path="expr" type="string" required>
+    Expression to derive the value
+  </ParamField>
+</ResponseField>
+
+### Resolution Attributes
+
+<ResponseField name="#[resolve(...)]" type="field attribute">
+  Resolve external data (token metadata, URLs)
+  
+  ```rust
+  #[resolve(type = "token_metadata", mint = "mint_address")]
+  pub metadata: Option<TokenMetadata>,
+  ```
+  
+  <ParamField path="type" type="string" required>
+    Resolution type: `token_metadata`, `http`, `url`
+  </ParamField>
+  
+  <ParamField path="mint" type="string">
+    For token metadata: field containing mint address
+  </ParamField>
+  
+  <ParamField path="url" type="string">
+    For HTTP resolution: URL template
+  </ParamField>
+</ResponseField>
+
+## Generated Code
+
+The macros generate:
+
+1. **State struct** with field accessors
+2. **Handler functions** for each instruction/account type
+3. **Parser integration** for Anchor IDL or Protobuf
+4. **AST serialization** for deployment
+5. **Bytecode compilation** functions
+6. **View definitions** for querying
+
+## Entity Attribute
+
+<ResponseField name="entity" type="struct attribute">
+  `#[entity(name = "...")]` - Mark a struct as an entity with a specific export name
+  
+  ```rust
+  #[entity(name = "UserProfile")]
+  #[derive(Stream)]
+  struct Profile {
+      // fields
+  }
+  ```
+  
+  The `name` parameter becomes the entity's export name for querying.
+</ResponseField>
+
+## Example
+
+```rust
+use hyperstack_macros::{hyperstack, Stream};
+
+#[hyperstack(idl = "./token.json")]
+pub mod token_stream {
+    #[entity(name = "TokenAccount")]
+    #[derive(Stream)]
+    struct Account {
+        #[map(from = "TokenAccount", field = "mint")]
+        pub mint: [u8; 32],
+        
+        #[map(from = "TokenAccount", field = "amount")]
+        pub balance: u64,
+        
+        #[resolve(type = "token_metadata", mint = "mint")]
+        pub metadata: Option<TokenMetadata>,
+        
+        #[event(instruction = "Transfer", limit = 100)]
+        pub transfers: Vec<EventWrapper<TransferEvent>>,
+        
+        #[aggregate(op = "sum", from = "amount")]
+        pub total_transferred: u64,
+    }
+}
+```

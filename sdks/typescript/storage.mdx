@@ -1,0 +1,492 @@
+---
+title: Storage Adapters
+description: Integrate HyperStack with state management libraries and persistent storage
+---
+
+## Overview
+
+Storage adapters provide a flexible interface for integrating HyperStack with various state management solutions and storage backends. Implement the `StorageAdapter` interface to connect with Zustand, Pinia, Svelte stores, Redux, IndexedDB, or any custom storage system.
+
+## Built-in Adapters
+
+### MemoryAdapter
+
+In-memory storage with LRU eviction. This is the default adapter.
+
+```typescript
+import { HyperStack, MemoryAdapter } from '@hyperstack/core';
+
+const storage = new MemoryAdapter({ maxEntriesPerView: 5000 });
+
+const client = await HyperStack.connect(stack, {
+  storage,
+});
+```
+
+**Features:**
+- Fast in-memory storage
+- LRU eviction when `maxEntriesPerView` is reached
+- Access order tracking
+- No persistence
+
+## StorageAdapter Interface
+
+Implement this interface to create custom storage adapters.
+
+```typescript
+interface StorageAdapter {
+  // Read operations
+  get<T>(viewPath: string, key: string): T | null;
+  getAll<T>(viewPath: string): T[];
+  getAllSync<T>(viewPath: string): T[] | undefined;
+  getSync<T>(viewPath: string, key: string): T | null | undefined;
+  has(viewPath: string, key: string): boolean;
+  keys(viewPath: string): string[];
+  size(viewPath: string): number;
+
+  // Write operations
+  set<T>(viewPath: string, key: string, data: T): void;
+  delete(viewPath: string, key: string): void;
+  clear(viewPath?: string): void;
+
+  // Optional: Eviction support
+  evictOldest?(viewPath: string): string | undefined;
+
+  // Optional: View configuration
+  setViewConfig?(viewPath: string, config: ViewSortConfig): void;
+  getViewConfig?(viewPath: string): ViewSortConfig | undefined;
+
+  // Update notifications
+  onUpdate(callback: UpdateCallback): () => void;
+  onRichUpdate(callback: RichUpdateCallback): () => void;
+  notifyUpdate<T>(viewPath: string, key: string, update: Update<T>): void;
+  notifyRichUpdate<T>(viewPath: string, key: string, update: RichUpdate<T>): void;
+}
+```
+
+## Read Operations
+
+### get()
+
+Retrieve a single entity by key.
+
+```typescript
+get<T>(viewPath: string, key: string): T | null
+```
+
+<ParamField path="viewPath" type="string" required>
+  View identifier (e.g., `'users.state'`)
+</ParamField>
+
+<ParamField path="key" type="string" required>
+  Entity key
+</ParamField>
+
+**Returns:** Entity or `null` if not found
+
+### getSync()
+
+Synchronously retrieve an entity. Used for optimistic UI rendering.
+
+```typescript
+getSync<T>(viewPath: string, key: string): T | null | undefined
+```
+
+**Returns:**
+- `T` - Entity found
+- `null` - Entity does not exist
+- `undefined` - No data available (async fetch in progress)
+
+### getAll()
+
+Retrieve all entities in a view.
+
+```typescript
+getAll<T>(viewPath: string): T[]
+```
+
+### getAllSync()
+
+Synchronously retrieve all entities.
+
+```typescript
+getAllSync<T>(viewPath: string): T[] | undefined
+```
+
+### has()
+
+Check if an entity exists.
+
+```typescript
+has(viewPath: string, key: string): boolean
+```
+
+### keys()
+
+Get all entity keys in a view.
+
+```typescript
+keys(viewPath: string): string[]
+```
+
+### size()
+
+Get the number of entities in a view.
+
+```typescript
+size(viewPath: string): number
+```
+
+## Write Operations
+
+### set()
+
+Store an entity.
+
+```typescript
+set<T>(viewPath: string, key: string, data: T): void
+```
+
+### delete()
+
+Remove an entity.
+
+```typescript
+delete(viewPath: string, key: string): void
+```
+
+### clear()
+
+Clear entities from a view or all views.
+
+```typescript
+clear(viewPath?: string): void
+```
+
+<ParamField path="viewPath" type="string">
+  Specific view to clear. If omitted, clears all views
+</ParamField>
+
+## Update Notifications
+
+### onUpdate()
+
+Register a callback for update notifications.
+
+```typescript
+onUpdate(callback: UpdateCallback): () => void
+```
+
+```typescript
+type UpdateCallback<T = unknown> = (
+  viewPath: string,
+  key: string,
+  update: Update<T>
+) => void;
+```
+
+**Returns:** Unsubscribe function
+
+### onRichUpdate()
+
+Register a callback for rich update notifications with before/after snapshots.
+
+```typescript
+onRichUpdate(callback: RichUpdateCallback): () => void
+```
+
+```typescript
+type RichUpdateCallback<T = unknown> = (
+  viewPath: string,
+  key: string,
+  update: RichUpdate<T>
+) => void;
+```
+
+### notifyUpdate()
+
+Trigger update callbacks. Called internally when entities change.
+
+```typescript
+notifyUpdate<T>(viewPath: string, key: string, update: Update<T>): void
+```
+
+### notifyRichUpdate()
+
+Trigger rich update callbacks.
+
+```typescript
+notifyRichUpdate<T>(viewPath: string, key: string, update: RichUpdate<T>): void
+```
+
+## Optional Features
+
+### evictOldest()
+
+Evict the least recently used entity from a view.
+
+```typescript
+evictOldest?(viewPath: string): string | undefined
+```
+
+**Returns:** Key of evicted entity, or `undefined` if view is empty
+
+Implement this for LRU eviction support.
+
+### View Configuration
+
+Store view-specific configuration like sort order.
+
+```typescript
+setViewConfig?(viewPath: string, config: ViewSortConfig): void
+getViewConfig?(viewPath: string): ViewSortConfig | undefined
+```
+
+```typescript
+interface ViewSortConfig {
+  sort?: SortConfig;
+}
+```
+
+## Implementation Examples
+
+### Zustand Adapter
+
+```typescript
+import { create } from 'zustand';
+import type { StorageAdapter, UpdateCallback, RichUpdateCallback } from '@hyperstack/core';
+
+interface ZustandState {
+  views: Record<string, Record<string, unknown>>;
+  set: (viewPath: string, key: string, data: unknown) => void;
+  delete: (viewPath: string, key: string) => void;
+  clear: (viewPath?: string) => void;
+}
+
+const useStore = create<ZustandState>((set) => ({
+  views: {},
+  set: (viewPath, key, data) =>
+    set((state) => ({
+      views: {
+        ...state.views,
+        [viewPath]: {
+          ...state.views[viewPath],
+          [key]: data,
+        },
+      },
+    })),
+  delete: (viewPath, key) =>
+    set((state) => {
+      const view = { ...state.views[viewPath] };
+      delete view[key];
+      return { views: { ...state.views, [viewPath]: view } };
+    }),
+  clear: (viewPath) =>
+    set((state) =>
+      viewPath
+        ? { views: { ...state.views, [viewPath]: {} } }
+        : { views: {} }
+    ),
+}));
+
+export class ZustandAdapter implements StorageAdapter {
+  private updateCallbacks = new Set<UpdateCallback>();
+  private richUpdateCallbacks = new Set<RichUpdateCallback>();
+
+  get<T>(viewPath: string, key: string): T | null {
+    const view = useStore.getState().views[viewPath];
+    return view?.[key] as T ?? null;
+  }
+
+  getAll<T>(viewPath: string): T[] {
+    const view = useStore.getState().views[viewPath];
+    return view ? Object.values(view) as T[] : [];
+  }
+
+  getAllSync<T>(viewPath: string): T[] | undefined {
+    return this.getAll<T>(viewPath);
+  }
+
+  getSync<T>(viewPath: string, key: string): T | null | undefined {
+    return this.get<T>(viewPath, key);
+  }
+
+  has(viewPath: string, key: string): boolean {
+    return key in (useStore.getState().views[viewPath] ?? {});
+  }
+
+  keys(viewPath: string): string[] {
+    const view = useStore.getState().views[viewPath];
+    return view ? Object.keys(view) : [];
+  }
+
+  size(viewPath: string): number {
+    return this.keys(viewPath).length;
+  }
+
+  set<T>(viewPath: string, key: string, data: T): void {
+    useStore.getState().set(viewPath, key, data);
+  }
+
+  delete(viewPath: string, key: string): void {
+    useStore.getState().delete(viewPath, key);
+  }
+
+  clear(viewPath?: string): void {
+    useStore.getState().clear(viewPath);
+  }
+
+  onUpdate(callback: UpdateCallback): () => void {
+    this.updateCallbacks.add(callback);
+    return () => this.updateCallbacks.delete(callback);
+  }
+
+  onRichUpdate(callback: RichUpdateCallback): () => void {
+    this.richUpdateCallbacks.add(callback);
+    return () => this.richUpdateCallbacks.delete(callback);
+  }
+
+  notifyUpdate<T>(viewPath: string, key: string, update: Update<T>): void {
+    for (const callback of this.updateCallbacks) {
+      callback(viewPath, key, update);
+    }
+  }
+
+  notifyRichUpdate<T>(viewPath: string, key: string, update: RichUpdate<T>): void {
+    for (const callback of this.richUpdateCallbacks) {
+      callback(viewPath, key, update);
+    }
+  }
+}
+```
+
+### IndexedDB Adapter
+
+```typescript
+import type { StorageAdapter } from '@hyperstack/core';
+
+export class IndexedDBAdapter implements StorageAdapter {
+  private db: IDBDatabase | null = null;
+  private dbName: string;
+  private updateCallbacks = new Set<UpdateCallback>();
+  private richUpdateCallbacks = new Set<RichUpdateCallback>();
+
+  constructor(options: { dbName: string }) {
+    this.dbName = options.dbName;
+    this.initDB();
+  }
+
+  private async initDB(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(this.dbName, 1);
+
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        this.db = request.result;
+        resolve();
+      };
+
+      request.onupgradeneeded = (event) => {
+        const db = (event.target as IDBOpenDBRequest).result;
+        if (!db.objectStoreNames.contains('entities')) {
+          db.createObjectStore('entities', { keyPath: ['viewPath', 'key'] });
+        }
+      };
+    });
+  }
+
+  async get<T>(viewPath: string, key: string): Promise<T | null> {
+    if (!this.db) await this.initDB();
+    
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction(['entities'], 'readonly');
+      const store = transaction.objectStore('entities');
+      const request = store.get([viewPath, key]);
+
+      request.onsuccess = () => resolve(request.result?.data ?? null);
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  getSync<T>(viewPath: string, key: string): T | null | undefined {
+    // IndexedDB is async-only, return undefined to signal async fetch needed
+    return undefined;
+  }
+
+  async set<T>(viewPath: string, key: string, data: T): Promise<void> {
+    if (!this.db) await this.initDB();
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction(['entities'], 'readwrite');
+      const store = transaction.objectStore('entities');
+      const request = store.put({ viewPath, key, data });
+
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  // Implement remaining methods...
+}
+```
+
+## Configuration
+
+### StorageAdapterConfig
+
+```typescript
+interface StorageAdapterConfig {
+  maxEntriesPerView?: number | null;
+}
+```
+
+<ParamField path="maxEntriesPerView" type="number | null">
+  Maximum entities per view. Set to `null` for unlimited
+</ParamField>
+
+## Update Types
+
+```typescript
+type Update<T> =
+  | { type: 'upsert'; key: string; data: T }
+  | { type: 'patch'; key: string; data: Partial<T> }
+  | { type: 'delete'; key: string };
+
+type RichUpdate<T> =
+  | { type: 'created'; key: string; data: T }
+  | { type: 'updated'; key: string; before: T; after: T; patch?: unknown }
+  | { type: 'deleted'; key: string; lastKnown?: T };
+```
+
+## Type Exports
+
+```typescript
+import type {
+  StorageAdapter,
+  StorageAdapterConfig,
+  UpdateCallback,
+  RichUpdateCallback,
+  ViewSortConfig,
+} from '@hyperstack/core';
+
+import { MemoryAdapter } from '@hyperstack/core';
+```
+
+## Best Practices
+
+1. **Implement update notifications** - Always call `notifyUpdate` and `notifyRichUpdate` when data changes
+2. **Handle async operations** - Return `undefined` from sync methods if data requires async fetch
+3. **Optimize getAllSync** - Cache results for frequently accessed list views
+4. **Implement eviction** - Prevent unbounded memory growth with LRU eviction
+5. **Persist configuration** - Store view configs alongside data for consistent behavior
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="HyperStack Client" icon="plug" href="/sdks/typescript/client">
+    Learn how to configure storage when connecting
+  </Card>
+  <Card title="Working with Views" icon="eye" href="/sdks/typescript/views">
+    Understand how views interact with storage
+  </Card>
+</CardGroup>

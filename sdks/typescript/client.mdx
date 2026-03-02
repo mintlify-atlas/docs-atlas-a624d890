@@ -1,0 +1,369 @@
+---
+title: HyperStack Client
+description: Initialize and manage the HyperStack TypeScript client for real-time data synchronization
+---
+
+## Overview
+
+The `HyperStack` class is the main entry point for connecting to a HyperStack server and accessing real-time views, subscriptions, and instruction execution.
+
+## Installation
+
+```bash
+npm install @hyperstack/core
+```
+
+## Quick Start
+
+```typescript
+import { HyperStack } from '@hyperstack/core';
+
+const stack = {
+  name: 'my-stack',
+  url: 'wss://api.example.com',
+  views: {
+    users: {
+      state: { mode: 'state' as const, view: 'users.state' },
+      list: { mode: 'list' as const, view: 'users.list' },
+    },
+  },
+};
+
+const client = await HyperStack.connect(stack);
+```
+
+## Connection
+
+### HyperStack.connect()
+
+Connect to a HyperStack server with the specified stack definition and options.
+
+```typescript
+static async connect<T extends StackDefinition>(
+  stack: T,
+  options?: ConnectOptions
+): Promise<HyperStack<T>>
+```
+
+<ParamField path="stack" type="StackDefinition" required>
+  Stack definition containing name, URL, views, and optional schemas/instructions
+</ParamField>
+
+<ParamField path="options" type="ConnectOptions">
+  Optional connection configuration
+</ParamField>
+
+### ConnectOptions
+
+<ParamField path="url" type="string">
+  WebSocket URL to connect to. Overrides stack.url if provided
+</ParamField>
+
+<ParamField path="storage" type="StorageAdapter">
+  Custom storage adapter for persisting entity data. Defaults to MemoryAdapter
+</ParamField>
+
+<ParamField path="maxEntriesPerView" type="number | null">
+  Maximum number of entities to keep per view. Set to `null` for unlimited
+  
+  Default: `10000`
+</ParamField>
+
+<ParamField path="autoReconnect" type="boolean">
+  Automatically reconnect on connection loss
+  
+  Default: `true`
+</ParamField>
+
+<ParamField path="reconnectIntervals" type="number[]">
+  Reconnection backoff intervals in milliseconds
+  
+  Default: `[1000, 2000, 4000, 8000, 16000]`
+</ParamField>
+
+<ParamField path="maxReconnectAttempts" type="number">
+  Maximum number of reconnection attempts
+  
+  Default: `5`
+</ParamField>
+
+<ParamField path="flushIntervalMs" type="number">
+  Interval for batching storage updates in milliseconds
+</ParamField>
+
+<ParamField path="validateFrames" type="boolean">
+  Enable runtime validation of incoming frames using schemas
+  
+  Default: `false`
+</ParamField>
+
+## Properties
+
+### views
+
+Access typed views for querying and subscribing to entity data.
+
+```typescript
+get views: TypedViews<TStack['views']>
+```
+
+```typescript
+const user = await client.views.users.state.get('user-123');
+const allUsers = await client.views.users.list.get();
+```
+
+See [Working with Views](/sdks/typescript/views) for detailed documentation.
+
+### instructions
+
+Access instruction executors for invoking on-chain programs.
+
+```typescript
+get instructions: InstructionsInterface<TStack['instructions']>
+```
+
+```typescript
+const result = await client.instructions.createUser(
+  { name: 'Alice' },
+  { wallet }
+);
+```
+
+See [Instruction Execution](/sdks/typescript/instructions) for detailed documentation.
+
+### connectionState
+
+Get the current connection state.
+
+```typescript
+get connectionState: ConnectionState
+```
+
+**Possible values:**
+- `'disconnected'` - Not connected
+- `'connecting'` - Connection in progress
+- `'connected'` - Successfully connected
+- `'reconnecting'` - Attempting to reconnect
+- `'error'` - Connection error
+
+```typescript
+const state = client.connectionState;
+if (state === 'connected') {
+  console.log('Ready to subscribe');
+}
+```
+
+### stackName
+
+Get the name of the connected stack.
+
+```typescript
+get stackName: string
+```
+
+### store
+
+Access the underlying storage adapter for direct data access.
+
+```typescript
+get store: StorageAdapter
+```
+
+## Methods
+
+### connect()
+
+Manually initiate connection to the server.
+
+```typescript
+async connect(): Promise<void>
+```
+
+```typescript
+const client = await HyperStack.connect(stack, { autoReconnect: false });
+await client.connect(); // Manually connect
+```
+
+### disconnect()
+
+Disconnect from the server and clear all subscriptions.
+
+```typescript
+disconnect(): void
+```
+
+```typescript
+client.disconnect();
+```
+
+### isConnected()
+
+Check if currently connected to the server.
+
+```typescript
+isConnected(): boolean
+```
+
+```typescript
+if (client.isConnected()) {
+  // Perform operations
+}
+```
+
+### clearStore()
+
+Clear all cached entity data from storage.
+
+```typescript
+clearStore(): void
+```
+
+```typescript
+client.clearStore();
+```
+
+### onConnectionStateChange()
+
+Listen for connection state changes.
+
+```typescript
+onConnectionStateChange(
+  callback: ConnectionStateCallback
+): UnsubscribeFn
+```
+
+<ParamField path="callback" type="(state: ConnectionState, error?: string) => void" required>
+  Function called when connection state changes
+</ParamField>
+
+**Returns:** Unsubscribe function
+
+```typescript
+const unsubscribe = client.onConnectionStateChange((state, error) => {
+  console.log('Connection state:', state);
+  if (error) {
+    console.error('Connection error:', error);
+  }
+});
+
+// Stop listening
+unsubscribe();
+```
+
+### onFrame()
+
+Listen for raw frames received from the server.
+
+```typescript
+onFrame(callback: (frame: Frame) => void): UnsubscribeFn
+```
+
+```typescript
+const unsubscribe = client.onFrame((frame) => {
+  console.log('Received frame:', frame);
+});
+```
+
+## Advanced Usage
+
+### Custom Storage Adapter
+
+Use a custom storage adapter for persistence or state management integration.
+
+```typescript
+import { HyperStack } from '@hyperstack/core';
+import { IndexedDBAdapter } from '@hyperstack/storage-indexeddb';
+
+const storage = new IndexedDBAdapter({ dbName: 'my-app' });
+
+const client = await HyperStack.connect(stack, {
+  storage,
+});
+```
+
+See [Storage Adapters](/sdks/typescript/storage) for implementation details.
+
+### Schema Validation
+
+Enable runtime validation of incoming data using Zod or similar schemas.
+
+```typescript
+import { z } from 'zod';
+
+const UserSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  email: z.string().email(),
+});
+
+const stack = {
+  name: 'my-stack',
+  url: 'wss://api.example.com',
+  views: { /* ... */ },
+  schemas: {
+    'users.state': UserSchema,
+  },
+};
+
+const client = await HyperStack.connect(stack, {
+  validateFrames: true,
+});
+```
+
+### Bounded Memory Usage
+
+Limit the number of entities stored per view to prevent unbounded memory growth.
+
+```typescript
+const client = await HyperStack.connect(stack, {
+  maxEntriesPerView: 1000, // Keep max 1000 entities per view
+});
+```
+
+When the limit is reached, the oldest entities are evicted using LRU (Least Recently Used) strategy.
+
+## Type Exports
+
+```typescript
+import type {
+  HyperStackOptions,
+  HyperStackOptionsWithStorage,
+  ConnectOptions,
+  StackDefinition,
+  ConnectionState,
+  ConnectionStateCallback,
+  UnsubscribeFn,
+} from '@hyperstack/core';
+```
+
+## Error Handling
+
+```typescript
+import { HyperStackError } from '@hyperstack/core';
+
+try {
+  const client = await HyperStack.connect(stack);
+} catch (error) {
+  if (error instanceof HyperStackError) {
+    console.error(`${error.code}: ${error.message}`);
+    console.error('Details:', error.details);
+  }
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Working with Views" icon="eye" href="/sdks/typescript/views">
+    Learn how to query and subscribe to real-time data
+  </Card>
+  <Card title="Subscriptions" icon="rss" href="/sdks/typescript/subscriptions">
+    Manage real-time subscriptions and updates
+  </Card>
+  <Card title="Storage Adapters" icon="database" href="/sdks/typescript/storage">
+    Integrate with state management libraries
+  </Card>
+  <Card title="Instructions" icon="code" href="/sdks/typescript/instructions">
+    Execute on-chain program instructions
+  </Card>
+</CardGroup>

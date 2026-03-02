@@ -1,0 +1,432 @@
+---
+title: React Hooks
+description: React hooks for querying entities and executing instructions
+---
+
+HyperStack React provides hooks for accessing entity data and executing Solana instructions with automatic state management.
+
+## Importing
+
+```typescript
+import {
+  useHyperstack,
+  useInstructionMutation,
+} from 'hyperstack-react';
+```
+
+## Stack Hook
+
+<ResponseField name="useHyperstack" type="hook">
+  Access typed views and instruction handlers for a stack
+  
+  ```typescript
+  function useHyperstack<TStack extends StackDefinition>(
+    stack: TStack,
+    options?: UseHyperstackOptions
+  ): {
+    views: TypedViews<TStack['views']>;
+    instructions: TStack['instructions'];
+    connectionState: ConnectionState | null;
+  }
+  ```
+  
+  ### Parameters
+  
+  <ParamField path="stack" type="TStack" required>
+    Stack definition (generated from your stream)
+  </ParamField>
+  
+  <ParamField path="options" type="UseHyperstackOptions">
+    Configuration options
+  </ParamField>
+  
+  ### Returns
+  
+  <ParamField path="views" type="TypedViews<TStack['views']>">
+    Typed view accessors for all entities
+  </ParamField>
+  
+  <ParamField path="instructions" type="TStack['instructions']">
+    Instruction handlers for mutations
+  </ParamField>
+  
+  <ParamField path="connectionState" type="ConnectionState | null">
+    Current connection state
+  </ParamField>
+  
+  ### Example
+  
+  ```tsx
+  import { useHyperstack } from 'hyperstack-react';
+  import { MyStack } from './generated/stack';
+  
+  function MyComponent() {
+    const { views, instructions, connectionState } = useHyperstack(MyStack);
+    
+    if (connectionState !== 'connected') {
+      return <div>Connecting...</div>;
+    }
+    
+    return <div>Connected!</div>;
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="UseHyperstackOptions" type="interface">
+  Options for `useHyperstack` hook
+  
+  ```typescript
+  interface UseHyperstackOptions {
+    urlOverride?: string;
+  }
+  ```
+  
+  <ParamField path="urlOverride" type="string">
+    Override the stack's default WebSocket URL
+  </ParamField>
+</ResponseField>
+
+## View Hooks
+
+View hooks are generated for each entity in your stack. Access them through the `useHyperstack` hook:
+
+```tsx
+const { views } = useHyperstack(MyStack);
+```
+
+### State View Hook
+
+<ResponseField name="StateViewHook" type="hook">
+  Hook for subscribing to single entities (state mode)
+  
+  ```typescript
+  function useStateView(
+    key: Record<string, string>,
+    options?: ViewHookOptions
+  ): ViewHookResult<T>
+  ```
+  
+  ### Parameters
+  
+  <ParamField path="key" type="Record<string, string>" required>
+    Entity key (e.g., `{ id: 'user-123' }`)
+  </ParamField>
+  
+  <ParamField path="options" type="ViewHookOptions">
+    Hook configuration
+  </ParamField>
+  
+  ### Example
+  
+  ```tsx
+  const { views } = useHyperstack(MyStack);
+  
+  function UserProfile({ userId }: { userId: string }) {
+    const { data: user, isLoading, error, refresh } = views.users.state.use(
+      { id: userId },
+      { enabled: true }
+    );
+    
+    if (isLoading) return <div>Loading...</div>;
+    if (error) return <div>Error: {error.message}</div>;
+    if (!user) return <div>User not found</div>;
+    
+    return (
+      <div>
+        <h1>{user.name}</h1>
+        <button onClick={refresh}>Refresh</button>
+      </div>
+    );
+  }
+  ```
+</ResponseField>
+
+### List View Hook
+
+<ResponseField name="ListViewHook" type="hook">
+  Hook for subscribing to multiple entities (list mode)
+  
+  ```typescript
+  function useListView(
+    params?: ListParams,
+    options?: ViewHookOptions
+  ): ViewHookResult<T[]>
+  ```
+  
+  ### Parameters
+  
+  <ParamField path="params" type="ListParams">
+    List query parameters (filters, pagination, sorting)
+  </ParamField>
+  
+  <ParamField path="options" type="ViewHookOptions">
+    Hook configuration
+  </ParamField>
+  
+  ### Example
+  
+  ```tsx
+  const { views } = useHyperstack(MyStack);
+  
+  function UserList() {
+    const { data: users, isLoading, error } = views.users.list.use(
+      {
+        filters: { status: 'active' },
+        take: 20,
+        skip: 0,
+      }
+    );
+    
+    if (isLoading) return <div>Loading...</div>;
+    if (error) return <div>Error: {error.message}</div>;
+    
+    return (
+      <ul>
+        {users?.map(user => (
+          <li key={user.id}>{user.name}</li>
+        ))}
+      </ul>
+    );
+  }
+  ```
+</ResponseField>
+
+## Mutation Hook
+
+<ResponseField name="useInstructionMutation" type="hook">
+  Execute Solana instructions with automatic state management
+  
+  ```typescript
+  function useInstructionMutation<TArgs, TResult>(
+    instructionHandler: InstructionHandler<TArgs, TResult>,
+    options?: UseMutationOptions<TArgs, TResult>
+  ): UseMutationResult<TArgs, TResult>
+  ```
+  
+  ### Parameters
+  
+  <ParamField path="instructionHandler" type="InstructionHandler<TArgs, TResult>" required>
+    Instruction handler from your stack
+  </ParamField>
+  
+  <ParamField path="options" type="UseMutationOptions<TArgs, TResult>">
+    Mutation configuration
+  </ParamField>
+  
+  ### Returns
+  
+  <ParamField path="mutate" type="(args: TArgs) => void">
+    Execute the mutation
+  </ParamField>
+  
+  <ParamField path="mutateAsync" type="async (args: TArgs) => Promise<TResult>">
+    Execute the mutation and return a promise
+  </ParamField>
+  
+  <ParamField path="status" type="MutationStatus">
+    Current mutation status: `'idle' | 'pending' | 'success' | 'error'`
+  </ParamField>
+  
+  <ParamField path="data" type="TResult | undefined">
+    Mutation result data
+  </ParamField>
+  
+  <ParamField path="error" type="Error | undefined">
+    Error if mutation failed
+  </ParamField>
+  
+  <ParamField path="isPending" type="boolean">
+    True while mutation is executing
+  </ParamField>
+  
+  <ParamField path="isSuccess" type="boolean">
+    True if mutation succeeded
+  </ParamField>
+  
+  <ParamField path="isError" type="boolean">
+    True if mutation failed
+  </ParamField>
+  
+  <ParamField path="reset" type="() => void">
+    Reset mutation state
+  </ParamField>
+  
+  ### Example
+  
+  ```tsx
+  import { useInstructionMutation } from 'hyperstack-react';
+  import { MyStack } from './generated/stack';
+  
+  function TransferButton() {
+    const { instructions } = useHyperstack(MyStack);
+    
+    const { mutate, isPending, isSuccess, error } = useInstructionMutation(
+      instructions.transfer,
+      {
+        onSuccess: (result) => {
+          console.log('Transfer successful:', result.signature);
+        },
+        onError: (error) => {
+          console.error('Transfer failed:', error);
+        },
+      }
+    );
+    
+    return (
+      <div>
+        <button
+          onClick={() => mutate({ to: 'recipient-address', amount: 100 })}
+          disabled={isPending}
+        >
+          {isPending ? 'Transferring...' : 'Transfer'}
+        </button>
+        {isSuccess && <div>Transfer successful!</div>}
+        {error && <div>Error: {error.message}</div>}
+      </div>
+    );
+  }
+  ```
+</ResponseField>
+
+## Hook Configuration Types
+
+<ResponseField name="ViewHookOptions" type="interface">
+  Options for view hooks
+  
+  ```typescript
+  interface ViewHookOptions {
+    enabled?: boolean;
+    initialData?: unknown;
+    schema?: Schema<unknown>;
+  }
+  ```
+  
+  <ParamField path="enabled" type="boolean" default="true">
+    Enable/disable the subscription
+  </ParamField>
+  
+  <ParamField path="initialData" type="T">
+    Initial data before first load
+  </ParamField>
+  
+  <ParamField path="schema" type="Schema<T>">
+    Validation schema (e.g., Zod)
+  </ParamField>
+</ResponseField>
+
+<ResponseField name="UseMutationOptions" type="interface">
+  Options for mutation hooks
+  
+  ```typescript
+  interface UseMutationOptions<TArgs, TResult> {
+    onSuccess?: (result: TResult, args: TArgs) => void;
+    onError?: (error: Error, args: TArgs) => void;
+    onSettled?: (result: TResult | undefined, error: Error | undefined, args: TArgs) => void;
+  }
+  ```
+  
+  <ParamField path="onSuccess" type="function">
+    Called on successful mutation
+  </ParamField>
+  
+  <ParamField path="onError" type="function">
+    Called on mutation error
+  </ParamField>
+  
+  <ParamField path="onSettled" type="function">
+    Called when mutation completes (success or error)
+  </ParamField>
+</ResponseField>
+
+## List Query Types
+
+<ResponseField name="ListParams" type="type">
+  Parameters for list queries
+  
+  ```typescript
+  type ListParams = ListParamsBase & (
+    | ListParamsSingle
+    | ListParamsMultiple
+  );
+  ```
+</ResponseField>
+
+<ResponseField name="ListParamsBase" type="interface">
+  Base list parameters
+  
+  ```typescript
+  interface ListParamsBase {
+    filters?: Record<string, string>;
+    take?: number;
+    skip?: number;
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="ViewMode" type="type">
+  View mode: `'state' | 'list'`
+</ResponseField>
+
+<ResponseField name="MutationStatus" type="type">
+  Mutation status: `'idle' | 'pending' | 'success' | 'error'`
+</ResponseField>
+
+## Complete Example
+
+```tsx
+import React from 'react';
+import { useHyperstack, useInstructionMutation } from 'hyperstack-react';
+import { MyStack } from './generated/stack';
+import { z } from 'zod';
+
+const UserSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  email: z.string().email(),
+  balance: z.number(),
+});
+
+function UserDashboard() {
+  const { views, instructions, connectionState } = useHyperstack(MyStack);
+  
+  // List all active users
+  const { data: users, isLoading } = views.users.list.use(
+    { filters: { status: 'active' }, take: 50 },
+    { schema: UserSchema }
+  );
+  
+  // Transfer mutation
+  const transfer = useInstructionMutation(instructions.transfer, {
+    onSuccess: (result) => {
+      console.log('Transfer completed:', result.signature);
+    },
+  });
+  
+  if (connectionState !== 'connected') {
+    return <div>Connecting to HyperStack...</div>;
+  }
+  
+  if (isLoading) {
+    return <div>Loading users...</div>;
+  }
+  
+  return (
+    <div>
+      <h1>Users</h1>
+      <ul>
+        {users?.map(user => (
+          <li key={user.id}>
+            {user.name} - Balance: {user.balance}
+            <button
+              onClick={() => transfer.mutate({ to: user.id, amount: 10 })}
+              disabled={transfer.isPending}
+            >
+              Send 10
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+```

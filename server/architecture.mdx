@@ -1,0 +1,337 @@
+---
+title: Server Architecture
+description: Deep dive into HyperStack server architecture and component interactions
+---
+
+The HyperStack server is built with a modular architecture that separates concerns and enables high-performance real-time data processing.
+
+## Component Overview
+
+### Runtime
+
+The `Runtime` orchestrates all server components and manages their lifecycle.
+
+**Location**: `runtime.rs:50-300`
+
+**Responsibilities**:
+- Spawns and coordinates async tasks (projector, WebSocket server, parser)
+- Manages graceful shutdown (SIGINT/SIGTERM)
+- Starts background cleanup tasks (bus cleanup, stats reporting)
+- Runs HTTP health server on dedicated OS thread
+
+**Key Tasks**:
+
+```rust
+// Projector task - processes mutations
+let projector_handle = tokio::spawn(projector.run());
+
+// WebSocket server task - handles client connections  
+let ws_handle = tokio::spawn(ws_server.start());
+
+// Parser task - ingests blockchain data
+let parser_handle = tokio::spawn(parser_setup(tx, health, config));
+
+// Bus cleanup - removes stale subscriptions every 60s
+let bus_cleanup_handle = tokio::spawn(cleanup_loop());
+```
+
+### Interpreter/VM
+
+The interpreter executes bytecode to transform blockchain events into entity mutations.
+
+**Location**: `interpreter/src/vm.rs`
+
+**Key Concepts**:
+
+**Registers** - 256 general-purpose registers for storing intermediate values
+
+**State Tables** - DashMap-based entity storage with LRU eviction
+- Max entries: 2,500 per entity (configurable)
+- Access time tracking for LRU
+- Version tracking for staleness detection
+
+**OpCodes** - Bytecode instructions:
+- `LoadEventField` - Extract data from blockchain events
+- `SetField` - Update entity fields
+- `ReadOrInitState` - Load or create entity
+- `UpdateState` - Save entity to state table
+- `EmitMutation` - Queue mutation for projector
+
+**Staleness Detection**:
+```rust
+pub fn is_fresh_update(
+    &self,
+    primary_key: &Value,
+    event_type: &str,
+    slot: u64,
+    ordering_value: u64,
+) -> bool {
+    // Lexicographic comparison: (slot, ordering_value)
+    // (100, 5) > (100, 3) > (99, 999)
+    let dominated = self.version_tracker
+        .get(primary_key, event_type)
+        .map(|(last_slot, last_version)| 
+            (slot, ordering_value) <= (last_slot, last_version)
+        )
+        .unwrap_or(false);
+    
+    !dominated
+}
+```
+
+### Projector
+
+The projector receives mutations from the VM and routes them to WebSocket clients.
+
+**Location**: `projector.rs:17-278`
+
+**Responsibilities**:
+- Receives `MutationBatch` from VM via mpsc channel
+- Filters mutations by view subscriptions
+- Applies projections (field selection)
+- Updates entity cache
+- Publishes frames to buses
+
+**Processing Pipeline**:
+
+```rust
+for mutation in batch.mutations {
+    // 1. Find matching view specs
+    let specs = view_index.by_export(&mutation.export);
+    
+    // 2. Filter by key patterns
+    let matching = specs.filter(|s| s.filters.matches(&key));
+    
+    // 3. Apply projection
+    let projected = spec.projection.apply(patch);
+    
+    // 4. Create frame
+    let frame = Frame { mode, export, op: "patch", key, data: projected };
+    
+    // 5. Update cache
+    entity_cache.upsert(&view_id, &key, data).await;
+    
+    // 6. Publish to bus
+    bus_manager.publish_list(&view_id, message).await;
+}
+```
+
+### Bus Manager
+
+The `BusManager` manages pub/sub channels for routing frames to clients.
+
+**Location**: `bus.rs`
+
+**Bus Types**:
+
+**State Buses** - Per-entity-key watch channels
+- Key: `(view_id, entity_key)`
+- Type: `tokio::sync::watch::Sender<Bytes>`
+- Use case: Single entity subscriptions
+
+**List Buses** - Per-view broadcast channels  
+- Key: `view_id`
+- Type: `tokio::sync::broadcast::Sender<BusMessage>`
+- Capacity: 1,000 messages
+- Use case: Collection subscriptions
+
+**Cleanup**:
+- Runs every 60 seconds
+- Removes buses with no receivers
+- Logs cleanup stats
+
+### Entity Cache
+
+The `EntityCache` stores current entity state for snapshot delivery.
+
+**Location**: `cache.rs`
+
+**Configuration**:
+```rust
+pub struct EntityCacheConfig {
+    pub max_entities_per_view: usize,  // Default: 500
+    pub snapshot_batch_size: usize,     // Default: 50
+}
+```
+
+**Operations**:
+
+```rust
+// Upsert entity
+cache.upsert(view_id, key, data).await;
+
+// Get single entity
+let entity = cache.get(view_id, key).await;
+
+// Get all entities for view
+let snapshots = cache.get_all(view_id).await;
+```
+
+### WebSocket Server
+
+The WebSocket server handles client connections and subscriptions.
+
+**Location**: `websocket/server.rs:38-1248`
+
+**Connection Handling**:
+
+1. Accept TCP connection
+2. Upgrade to WebSocket
+3. Spawn client handler task
+4. Parse subscription messages
+5. Attach to appropriate buses
+6. Stream frames to client
+7. Cleanup on disconnect
+
+**Subscription Flow**:
+
+```rust
+// 1. Client sends subscription
+{ "view": "Token/list", "key": "*" }
+
+// 2. Server sends subscribed frame
+{ "op": "subscribed", "view": "Token/list", "mode": "list" }
+
+// 3. Server sends snapshot batches
+{ "op": "snapshot", "data": [...], "complete": false }
+{ "op": "snapshot", "data": [...], "complete": true }
+
+// 4. Server streams live updates
+{ "op": "patch", "key": "abc", "data": {...} }
+```
+
+## Data Structures
+
+### MutationBatch
+
+```rust
+pub struct MutationBatch {
+    pub mutations: Vec<Mutation>,
+    pub slot_context: Option<SlotContext>,
+    pub event_context: Option<EventContext>,
+    pub span: tracing::Span,
+}
+
+pub struct Mutation {
+    pub export: String,      // Entity name
+    pub key: Value,          // Primary key
+    pub patch: Value,        // Partial state
+    pub append: Vec<String>, // Append-only fields
+}
+```
+
+### ViewSpec
+
+```rust
+pub struct ViewSpec {
+    pub id: String,              // "Token/list"
+    pub export: String,          // "Token"
+    pub mode: Mode,              // List, State, Append
+    pub projection: Projection,  // Field selection
+    pub filters: Filters,        // Key pattern matching
+    pub delivery: Delivery,      // Snapshot config
+    pub pipeline: Option<Pipeline>, // View transforms
+}
+```
+
+### Frame Types
+
+```rust
+// Data frame
+pub struct Frame {
+    pub mode: Mode,
+    pub export: String,  // View ID
+    pub op: &'static str, // "patch", "delete"
+    pub key: String,
+    pub data: Value,
+    pub append: Vec<String>,
+}
+
+// Snapshot frame
+pub struct SnapshotFrame {
+    pub mode: Mode,
+    pub export: String,
+    pub op: &'static str, // "snapshot"
+    pub data: Vec<SnapshotEntity>,
+    pub complete: bool,
+}
+```
+
+## Threading Model
+
+### Main Runtime
+- Multi-threaded Tokio runtime
+- Worker threads: CPU count (configurable)
+- Handles all async I/O and processing
+
+### HTTP Health Server
+- Dedicated OS thread with single-threaded runtime
+- Isolated from main runtime to ensure liveness responses
+- Critical for Kubernetes readiness/liveness probes
+
+**Why Separate Thread?**
+
+```rust
+// Health server uses dedicated thread to avoid saturation
+let join_handle = std::thread::Builder::new()
+    .name("health-server".into())
+    .spawn(move || {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("Failed to create health server runtime");
+        rt.block_on(async move {
+            if let Err(e) = http_server.start().await {
+                error!("HTTP health server error: {}", e);
+            }
+        });
+    })
+```
+
+This prevents scenarios where high event throughput saturates the main runtime's worker threads, causing health check timeouts and spurious container restarts.
+
+## Performance Characteristics
+
+### Memory Usage
+
+**Per-Entity Overhead**:
+- State table entry: ~200-500 bytes (depending on fields)
+- Entity cache entry: ~200-500 bytes
+- Total: ~400-1000 bytes per entity
+
+**Limits**:
+- VM state table: 2,500 entities per type
+- Entity cache: 500 entities per view
+- Path cache: Unbounded (typically less than 1 MB)
+- Resolver cache: 5,000 entries
+
+### Throughput
+
+**Bottlenecks**:
+1. VM bytecode execution (CPU-bound)
+2. Entity cache updates (lock contention)
+3. WebSocket frame serialization (CPU-bound)
+4. Network I/O (bandwidth)
+
+**Optimization Strategies**:
+- Use computed fields sparingly
+- Minimize field projections
+- Enable compression for large payloads
+- Batch mutations when possible
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="sliders" href="/server/configuration">
+    Configure server components
+  </Card>
+  <Card title="VM Deep Dive" icon="microchip" href="/server/vm">
+    Learn about the virtual machine
+  </Card>
+  <Card title="WebSocket Protocol" icon="plug" href="/server/websocket-protocol">
+    Understand the WebSocket protocol
+  </Card>
+  <Card title="Monitoring" icon="chart-line" href="/server/monitoring">
+    Set up observability
+  </Card>
+</CardGroup>

@@ -1,0 +1,306 @@
+---
+title: "Views and ViewBuilder"
+description: "Access and query data views with typed handles in the Rust SDK"
+---
+
+Views provide typed access to your stack's data. All views return collections (`Vec<T>`). Use `.first()` on the result if you need a single item.
+
+## View Types
+
+### ViewHandle
+
+A handle to a view that provides get/watch operations for collections:
+
+```rust
+let rounds = hs.views.latest().get().await;
+// Returns Vec<T>
+
+// Get first item from a limited view
+let latest_round = hs.views.latest().get().await.first().cloned();
+```
+
+### StateView
+
+A view that requires a key for access:
+
+```rust
+let round = hs.views.state().get("round_key").await;
+// Returns Option<T>
+```
+
+## Getting Data
+
+### get()
+
+Fetch all items from a view asynchronously:
+
+```rust
+// Get all rounds
+let rounds = hs.views.list().get().await;
+
+// Get single item from limited view
+if let Some(latest) = hs.views.latest().get().await.first() {
+    println!("Latest round: {:?}", latest);
+}
+```
+
+**Returns:** `Vec<T>` for ViewHandle, `Option<T>` for StateView
+
+### get_sync()
+
+Synchronously get cached data without waiting:
+
+```rust
+let rounds = hs.views.list().get_sync();
+// Returns immediately with cached data or empty vec
+```
+
+**Returns:** Cached data without waiting for subscription
+
+## Streaming Updates
+
+### listen() - Simplest API
+
+Stream merged entity values directly (filters out deletes):
+
+```rust
+use futures_util::StreamExt;
+
+// Stream latest round updates
+let mut stream = hs.views.latest().listen();
+while let Some(round) = stream.next().await {
+    println!("Round updated: {:?}", round);
+}
+```
+
+**Returns:** `UseBuilder<T>` implementing `Stream<Item = T>`
+
+### watch() - Full Update Control
+
+Watch for updates with operation types:
+
+```rust
+let mut stream = hs.views.latest().watch();
+while let Some(update) = stream.next().await {
+    match update {
+        Update::Upsert { key, data } => {
+            println!("Upserted {}: {:?}", key, data);
+        }
+        Update::Patch { key, data } => {
+            println!("Patched {}: {:?}", key, data);
+        }
+        Update::Delete { key } => {
+            println!("Deleted {}", key);
+        }
+    }
+}
+```
+
+**Returns:** `WatchBuilder<T>` implementing `Stream<Item = Update<T>>`
+
+### watch_rich() - Before/After Diffs
+
+Watch with detailed before/after state:
+
+```rust
+let mut stream = hs.views.latest().watch_rich();
+while let Some(update) = stream.next().await {
+    match update {
+        RichUpdate::Created { key, data } => {
+            println!("Created {}: {:?}", key, data);
+        }
+        RichUpdate::Updated { key, before, after, patch } => {
+            println!("Updated {}", key);
+            println!("  Before: {:?}", before);
+            println!("  After: {:?}", after);
+            println!("  Patch: {:?}", patch);
+        }
+        RichUpdate::Deleted { key, last_known } => {
+            println!("Deleted {}: {:?}", key, last_known);
+        }
+    }
+}
+```
+
+**Returns:** `RichWatchBuilder<T>` implementing `Stream<Item = RichUpdate<T>>`
+
+## Stream Builders
+
+All stream builders support chaining configuration methods:
+
+### take(n)
+
+Limit subscription to top N items:
+
+```rust
+let stream = hs.views.list().listen().take(10);
+// Only receives updates for top 10 items
+```
+
+### skip(n)
+
+Skip the first N items:
+
+```rust
+let stream = hs.views.list().listen().skip(5).take(10);
+// Items 6-15
+```
+
+### filter(key, value)
+
+Add server-side filter:
+
+```rust
+let stream = hs.views.list()
+    .listen()
+    .filter("status", "active")
+    .filter("type", "premium");
+```
+
+## StateView Methods
+
+For views requiring a key:
+
+### get(key)
+
+```rust
+let round = hs.views.state().get("round_123").await;
+if let Some(r) = round {
+    println!("Found round: {:?}", r);
+}
+```
+
+### listen(key)
+
+```rust
+let mut stream = hs.views.state().listen("round_123");
+while let Some(round) = stream.next().await {
+    println!("Round updated: {:?}", round);
+}
+```
+
+### watch(key)
+
+```rust
+let mut stream = hs.views.state().watch("round_123");
+while let Some(update) = stream.next().await {
+    // Handle Update<T>
+}
+```
+
+### watch_rich(key)
+
+```rust
+let mut stream = hs.views.state().watch_rich("round_123");
+while let Some(update) = stream.next().await {
+    // Handle RichUpdate<T>
+}
+```
+
+## Update Types
+
+### Update\<T\>
+
+Basic update enum with helper methods:
+
+```rust
+pub enum Update<T> {
+    Upsert { key: String, data: T },
+    Patch { key: String, data: T },
+    Delete { key: String },
+}
+
+impl<T> Update<T> {
+    pub fn key(&self) -> &str;
+    pub fn data(&self) -> Option<&T>;
+    pub fn is_delete(&self) -> bool;
+    pub fn has_data(&self) -> bool;
+    pub fn into_data(self) -> Option<T>;
+    pub fn into_key(self) -> String;
+    pub fn map<U, F: FnOnce(T) -> U>(self, f: F) -> Update<U>;
+}
+```
+
+### RichUpdate\<T\>
+
+Detailed update with before/after state:
+
+```rust
+pub enum RichUpdate<T> {
+    Created {
+        key: String,
+        data: T,
+    },
+    Updated {
+        key: String,
+        before: T,
+        after: T,
+        patch: Option<serde_json::Value>,
+    },
+    Deleted {
+        key: String,
+        last_known: Option<T>,
+    },
+}
+
+impl<T> RichUpdate<T> {
+    pub fn key(&self) -> &str;
+    pub fn data(&self) -> Option<&T>;
+    pub fn before(&self) -> Option<&T>;
+    pub fn into_data(self) -> Option<T>;
+    pub fn is_created(&self) -> bool;
+    pub fn is_updated(&self) -> bool;
+    pub fn is_deleted(&self) -> bool;
+    pub fn patch(&self) -> Option<&serde_json::Value>;
+    pub fn has_patch_field(&self, field: &str) -> bool;
+}
+```
+
+## ViewBuilder
+
+The `ViewBuilder` is used internally by generated code to create view handles:
+
+```rust
+pub struct ViewBuilder {
+    connection: ConnectionManager,
+    store: SharedStore,
+    initial_data_timeout: Duration,
+}
+
+impl ViewBuilder {
+    pub fn view<T>(&self, view_path: &str) -> ViewHandle<T>;
+}
+```
+
+## Custom Stack Views
+
+Implement the `Views` trait for custom stacks:
+
+```rust
+use hyperstack_sdk::view::{Views, ViewBuilder};
+
+pub struct MyViews {
+    builder: ViewBuilder,
+}
+
+impl Views for MyViews {
+    fn from_builder(builder: ViewBuilder) -> Self {
+        Self { builder }
+    }
+}
+
+impl MyViews {
+    pub fn my_view(&self) -> ViewHandle<MyData> {
+        self.builder.view("my_view")
+    }
+}
+```
+
+## Best Practices
+
+- Use `listen()` for the simplest streaming API (no deletes)
+- Use `watch()` when you need to handle deletions
+- Use `watch_rich()` for detailed before/after tracking
+- Chain `take()` and `skip()` for pagination
+- Use `get_sync()` for immediate cached access
+- Remember: views return `Vec<T>`, use `.first()` for single items

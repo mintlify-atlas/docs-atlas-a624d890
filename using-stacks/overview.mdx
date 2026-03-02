@@ -1,0 +1,224 @@
+---
+title: "Stack Overview"
+description: "Learn how to use stacks to access views, execute transactions, and work with real-time data"
+---
+
+Stacks are the client-side interface to your deployed Hyperstack stream. They provide type-safe access to views, transactions, and helpers.
+
+## What is a Stack?
+
+A stack definition includes:
+
+- **Views** - Real-time data subscriptions organized by entity
+- **Instructions** - Transaction handlers for writing to the blockchain
+- **URL** - WebSocket endpoint for your deployed stream
+
+Stacks are defined once and used across your application to access data and submit transactions.
+
+## Quick Start
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    import { HyperStack } from 'hyperstack-typescript';
+    import { MyStack } from './stack';
+
+    // Connect to the stack
+    const client = await HyperStack.connect(MyStack);
+
+    // Access views
+    const tokens = await client.views.tokens.list.get();
+
+    // Subscribe to updates
+    for await (const data of client.views.tokens.list.use()) {
+      console.log('Tokens updated:', data);
+    }
+    ```
+  </Tab>
+
+  <Tab title="React">
+    ```tsx
+    import { HyperstackProvider, useHyperstackContext } from 'hyperstack-react';
+    import { MyStack } from './stack';
+
+    // 1. Wrap your app with the provider
+    function App() {
+      return (
+        <HyperstackProvider autoConnect>
+          <Dashboard />
+        </HyperstackProvider>
+      );
+    }
+
+    // 2. Access the stack in components
+    function Dashboard() {
+      const { getClient } = useHyperstackContext();
+      const client = getClient(MyStack);
+
+      // Use views directly
+      const tokens = useView(MyStack, 'Token/list');
+
+      return <div>{tokens.length} tokens</div>;
+    }
+    ```
+  </Tab>
+
+  <Tab title="Rust">
+    ```rust
+    use hyperstack_sdk::prelude::*;
+    use my_stack::MyStack;
+
+    // Connect to the stack
+    let hs = HyperStack::<MyStack>::connect().await?;
+
+    // Access views through the generated views struct
+    let tokens = hs.views.tokens().list().get().await;
+
+    // Subscribe to updates
+    let mut stream = hs.views.tokens().list().watch();
+    while let Some(update) = stream.next().await {
+        println!("Tokens updated: {:?}", update);
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Stack Structure
+
+Stacks are organized into logical groups:
+
+```typescript
+const MyStack = {
+  name: 'my-app',
+  url: 'wss://my-stream.hyperstack.dev',
+  views: {
+    tokens: {
+      list: { mode: 'list', view: 'Token/list' },
+      state: { mode: 'state', view: 'Token/state' },
+    },
+    trades: {
+      list: { mode: 'list', view: 'Trade/list' },
+    },
+  },
+  instructions: {
+    swap: SwapInstruction,
+    createToken: CreateTokenInstruction,
+  },
+};
+```
+
+## Connection States
+
+Stacks maintain a WebSocket connection with the following states:
+
+- `disconnected` - Not connected
+- `connecting` - Establishing connection
+- `connected` - Active connection
+- `reconnecting` - Attempting to reconnect after disconnect
+- `error` - Connection failed
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    const client = await HyperStack.connect(MyStack);
+
+    // Check connection state
+    console.log(client.connectionState); // 'connected'
+
+    // Monitor connection changes
+    client.onConnectionStateChange((state, error) => {
+      console.log('Connection:', state);
+      if (error) console.error('Error:', error);
+    });
+    ```
+  </Tab>
+
+  <Tab title="React">
+    ```tsx
+    import { useConnectionState } from 'hyperstack-react';
+
+    function ConnectionIndicator() {
+      const state = useConnectionState(MyStack);
+
+      const colors = {
+        connected: 'green',
+        connecting: 'yellow',
+        reconnecting: 'orange',
+        error: 'red',
+        disconnected: 'gray',
+      };
+
+      return (
+        <span style={{ color: colors[state] }}>
+          {state === 'connected' ? 'Live' : state}
+        </span>
+      );
+    }
+    ```
+  </Tab>
+
+  <Tab title="Rust">
+    ```rust
+    let hs = HyperStack::<MyStack>::connect().await?;
+
+    // Check connection state
+    let state = hs.connection_state().await;
+    println!("Connection state: {:?}", state);
+
+    // Disconnect when done
+    hs.disconnect().await;
+    ```
+  </Tab>
+</Tabs>
+
+## Connection Options
+
+Customize connection behavior:
+
+<Tabs>
+  <Tab title="TypeScript">
+    ```typescript
+    const client = await HyperStack.connect(MyStack, {
+      url: 'wss://custom-url.com', // Override default URL
+      autoReconnect: true,         // Enable auto-reconnect
+      reconnectIntervals: [1000, 2000, 4000], // Backoff intervals
+      maxReconnectAttempts: 5,     // Max reconnect attempts
+      maxEntriesPerView: 10000,    // Limit cached entries
+      flushIntervalMs: 100,        // Batch update interval
+    });
+    ```
+  </Tab>
+
+  <Tab title="Rust">
+    ```rust
+    use std::time::Duration;
+
+    let hs = HyperStack::<MyStack>::builder()
+        .url("wss://custom-url.com")
+        .auto_reconnect(true)
+        .reconnect_intervals(vec![
+            Duration::from_secs(1),
+            Duration::from_secs(2),
+            Duration::from_secs(4),
+        ])
+        .max_reconnect_attempts(5)
+        .max_entries_per_view(10000)
+        .connect()
+        .await?;
+    ```
+  </Tab>
+</Tabs>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Views" icon="eye" href="/using-stacks/views">
+    Learn about state and list views
+  </Card>
+  <Card title="Subscriptions" icon="rss" href="/using-stacks/subscriptions">
+    Subscribe to real-time data
+  </Card>
+  <Card title="Transactions" icon="pen-to-square" href="/using-stacks/transactions">
+    Execute blockchain transactions
+  </Card>
+</CardGroup>
